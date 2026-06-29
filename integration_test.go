@@ -591,6 +591,10 @@ func (c *testGitClient) PushTag(ctx context.Context, tagName string, auth gitpkg
 	return nil
 }
 
+func (c *testGitClient) FindTagByName(name string) (*gitpkg.Tag, error) {
+	return nil, nil
+}
+
 // testGitHubClient implements cli.GitHubClient for testing
 type testGitHubClient struct {
 	releaseExists   bool
