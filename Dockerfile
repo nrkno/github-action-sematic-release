@@ -24,14 +24,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     ./cmd/semrel
 
 # Final stage: alpine (distroless/static has no shell; entrypoint.sh needs sh).
-# nonroot user is created to avoid running as root.
+# Must run as root: GitHub Actions mounts the workspace owned by the runner
+# user (root), so a non-root USER cannot write to .git/ or $GITHUB_OUTPUT.
 FROM alpine:3.19
-
-RUN addgroup -S nonroot && adduser -S nonroot -G nonroot
 
 COPY --from=builder /app/semrel /semrel
 COPY entrypoint.sh /entrypoint.sh
-
-USER nonroot
 
 ENTRYPOINT ["/entrypoint.sh"]
