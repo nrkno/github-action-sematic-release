@@ -51,6 +51,6 @@ runs:
   using: docker
   # Placeholder — release.yml overwrites this line with the real tag+digest
   # before committing, so action users always pin to an immutable digest.
-  image: docker://ghcr.io/nrkno/github-action-sematic-release:v0.0.1@sha256:b3e319e15173f7a998a438ec21f6f4d0190382f32601fea5f2e5598a48db856b
+  image: docker://ghcr.io/nrkno/github-action-sematic-release:v0.0.2@sha256:a6811d1fabfd08f70b3a68d46a1c47ea5fb91cad119037072cf77f32df67352e
   env:
     GITHUB_TOKEN: ${{ inputs.token }}
