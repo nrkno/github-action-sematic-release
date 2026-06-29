@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -61,6 +62,26 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Load environment
 			ghEnv := env.Load()
+
+			// Load optional .semrelrc.yml from working directory.
+			// Absent file → DefaultLintOptions (all rules at defaults).
+			// Present file → overrides only the fields specified.
+			wd := os.Getenv("INPUT_WORKING_DIRECTORY")
+			if wd == "" {
+				wd = "."
+			}
+			cfg, cfgErr := conventional.LoadConfig(filepath.Join(wd, ".semrelrc.yml"))
+			if cfgErr != nil {
+				logger.Error("failed to load .semrelrc.yml", "error", cfgErr)
+				return cfgErr
+			}
+			lintOpts := conventional.DefaultLintOptions()
+			if cfg != nil {
+				lintOpts = conventional.LintOptions{
+					CapitalFirstLetter: cfg.Lint.Rules.CapitalFirstLetter,
+					RequireScope:       cfg.Lint.Rules.RequireScope,
+				}
+			}
 
 			// Determine lint range based on context
 			switch ghEnv.EventName {
@@ -132,7 +153,7 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 			}
 
 			// Validate
-			violations := conventional.ValidateAll(rawCommits)
+			violations := conventional.ValidateAll(rawCommits, lintOpts)
 
 			if len(violations) > 0 {
 				// Output violations to stderr

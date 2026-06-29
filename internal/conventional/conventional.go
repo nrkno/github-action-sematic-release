@@ -159,7 +159,13 @@ func Parse(raw RawCommit) (Commit, error) {
 // ValidateAll validates all commits and returns a slice of violations.
 // Never stops at first violation — collects ALL.
 // Returns empty slice (not nil) when all commits are valid.
-func ValidateAll(commits []RawCommit) []Violation {
+// An optional LintOptions argument overrides the default rule set.
+func ValidateAll(commits []RawCommit, opts ...LintOptions) []Violation {
+	opt := DefaultLintOptions()
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
 	violations := []Violation{} // Initialize as empty slice, not nil
 
 	for _, raw := range commits {
@@ -231,7 +237,7 @@ func ValidateAll(commits []RawCommit) []Violation {
 			}
 
 			// Check for capital first letter (warning, but still a violation)
-			if len(commit.Description) > 0 && unicode.IsUpper(rune(commit.Description[0])) {
+			if opt.CapitalFirstLetter && len(commit.Description) > 0 && unicode.IsUpper(rune(commit.Description[0])) {
 				example := string(commit.Type)
 				if commit.Scope != "" {
 					example += "(" + commit.Scope + ")"
@@ -249,6 +255,16 @@ func ValidateAll(commits []RawCommit) []Violation {
 					Example:    example,
 				})
 			}
+		}
+
+		if opt.RequireScope && commit.Scope == "" {
+			violations = append(violations, Violation{
+				SHA:        raw.SHA,
+				ShortSHA:   shortSHA(raw.SHA),
+				RawMessage: raw.Message,
+				Rule:       "missing-scope",
+				Example:    string(commit.Type) + "(scope): " + commit.Description,
+			})
 		}
 	}
 
