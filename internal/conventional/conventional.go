@@ -166,6 +166,15 @@ func ValidateAll(commits []RawCommit, opts ...LintOptions) []Violation {
 		opt = opts[0]
 	}
 
+	// Use AllowedTypes if provided (len > 0); otherwise fall back to built-in validTypes.
+	typeSet := validTypes
+	if len(opt.AllowedTypes) > 0 {
+		typeSet = make(map[CommitType]bool, len(opt.AllowedTypes))
+		for _, t := range opt.AllowedTypes {
+			typeSet[t] = true
+		}
+	}
+
 	violations := []Violation{} // Initialize as empty slice, not nil
 
 	for _, raw := range commits {
@@ -196,7 +205,7 @@ func ValidateAll(commits []RawCommit, opts ...LintOptions) []Violation {
 				Rule:       "missing-type",
 				Example:    "feat: " + commit.Description,
 			})
-		} else if !validTypes[commit.Type] {
+		} else if !typeSet[commit.Type] {
 			violations = append(violations, Violation{
 				SHA:        raw.SHA,
 				ShortSHA:   shortSHA(raw.SHA),

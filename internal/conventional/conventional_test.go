@@ -4,6 +4,55 @@ import (
 	"testing"
 )
 
+func TestValidateAll_AllowedTypes_CustomTypeAllowed(t *testing.T) {
+	commits := []RawCommit{{SHA: "abc1234567890", Message: "custom: foo"}}
+	opts := LintOptions{
+		CapitalFirstLetter: false,
+		RequireScope:       false,
+		AllowedTypes:       []CommitType{"feat", "fix", "custom"},
+	}
+	violations := ValidateAll(commits, opts)
+	if len(violations) != 0 {
+		t.Errorf("ValidateAll() returned %d violations, want 0; violations: %v", len(violations), violations)
+	}
+}
+
+func TestValidateAll_AllowedTypes_UnknownTypeRejected(t *testing.T) {
+	commits := []RawCommit{{SHA: "abc1234567890", Message: "chore: foo"}}
+	opts := LintOptions{
+		CapitalFirstLetter: false,
+		RequireScope:       false,
+		AllowedTypes:       []CommitType{"feat"},
+	}
+	violations := ValidateAll(commits, opts)
+	if len(violations) != 1 {
+		t.Fatalf("ValidateAll() returned %d violations, want 1", len(violations))
+	}
+	if violations[0].Rule != "invalid-type" {
+		t.Errorf("Rule = %q, want invalid-type", violations[0].Rule)
+	}
+}
+
+func TestValidateAll_AllowedTypes_Empty_UsesBuiltins(t *testing.T) {
+	// AllowedTypes=nil → falls back to built-in validTypes
+	commits := []RawCommit{
+		{SHA: "abc1234567890", Message: "feat: add login"},
+		{SHA: "def1234567890", Message: "custom: should fail"},
+	}
+	opts := LintOptions{
+		CapitalFirstLetter: false,
+		RequireScope:       false,
+		AllowedTypes:       nil,
+	}
+	violations := ValidateAll(commits, opts)
+	if len(violations) != 1 {
+		t.Fatalf("ValidateAll() returned %d violations, want 1", len(violations))
+	}
+	if violations[0].Rule != "invalid-type" {
+		t.Errorf("Rule = %q, want invalid-type", violations[0].Rule)
+	}
+}
+
 func TestParse_ValidCommits(t *testing.T) {
 	tests := []struct {
 		name     string

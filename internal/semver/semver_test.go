@@ -132,9 +132,9 @@ func TestDetectBumpType_Fix(t *testing.T) {
 	}
 }
 
-// Test DetectBumpType with BREAKING CHANGE
+// Test DetectBumpType with breaking-change (hyphenated)
 func TestDetectBumpType_BreakingChange(t *testing.T) {
-	bump := DetectBumpType([]string{"BREAKING CHANGE"})
+	bump := DetectBumpType([]string{"breaking-change"})
 	if bump != BumpMajor {
 		t.Errorf("expected BumpMajor, got %v", bump)
 	}
@@ -148,9 +148,9 @@ func TestDetectBumpType_FeatAndFix(t *testing.T) {
 	}
 }
 
-// Test DetectBumpType with multiple types (BREAKING CHANGE + feat)
+// Test DetectBumpType with multiple types (breaking-change + feat)
 func TestDetectBumpType_BreakingAndFeat(t *testing.T) {
-	bump := DetectBumpType([]string{"BREAKING CHANGE", "feat"})
+	bump := DetectBumpType([]string{"breaking-change", "feat"})
 	if bump != BumpMajor {
 		t.Errorf("expected BumpMajor (highest), got %v", bump)
 	}
@@ -198,7 +198,7 @@ func TestBootstrapVersion_Empty(t *testing.T) {
 
 // Test BootstrapVersion with BREAKING CHANGE
 func TestBootstrapVersion_BreakingChange(t *testing.T) {
-	v := BootstrapVersion([]string{"BREAKING CHANGE"})
+	v := BootstrapVersion([]string{"breaking-change"})
 	if v.Major != 1 || v.Minor != 0 || v.Patch != 0 {
 		t.Errorf("expected Version{1, 0, 0}, got %v", v)
 	}
@@ -249,11 +249,11 @@ func TestDetectBumpType_Comprehensive(t *testing.T) {
 	}{
 		{"single feat", []string{"feat"}, BumpMinor},
 		{"single fix", []string{"fix"}, BumpPatch},
-		{"single breaking", []string{"BREAKING CHANGE"}, BumpMajor},
+		{"single breaking", []string{"breaking-change"}, BumpMajor},
 		{"feat and fix", []string{"feat", "fix"}, BumpMinor},
-		{"breaking and feat", []string{"BREAKING CHANGE", "feat"}, BumpMajor},
-		{"breaking and fix", []string{"BREAKING CHANGE", "fix"}, BumpMajor},
-		{"all three", []string{"BREAKING CHANGE", "feat", "fix"}, BumpMajor},
+		{"breaking and feat", []string{"breaking-change", "feat"}, BumpMajor},
+		{"breaking and fix", []string{"breaking-change", "fix"}, BumpMajor},
+		{"all three", []string{"breaking-change", "feat", "fix"}, BumpMajor},
 		{"empty", []string{}, BumpNone},
 		{"unknown", []string{"unknown"}, BumpNone},
 		{"multiple unknown", []string{"unknown1", "unknown2"}, BumpNone},
@@ -278,11 +278,11 @@ func TestBootstrapVersion_Comprehensive(t *testing.T) {
 	}{
 		{"feat", []string{"feat"}, Version{0, 1, 0}},
 		{"fix", []string{"fix"}, Version{0, 0, 1}},
-		{"breaking", []string{"BREAKING CHANGE"}, Version{1, 0, 0}},
+		{"breaking", []string{"breaking-change"}, Version{1, 0, 0}},
 		{"empty", []string{}, Version{0, 0, 0}},
 		{"unknown", []string{"unknown"}, Version{0, 0, 0}},
 		{"feat and fix", []string{"feat", "fix"}, Version{0, 1, 0}},
-		{"breaking and feat", []string{"BREAKING CHANGE", "feat"}, Version{1, 0, 0}},
+		{"breaking and feat", []string{"breaking-change", "feat"}, Version{1, 0, 0}},
 	}
 
 	for _, tt := range tests {
@@ -292,6 +292,140 @@ func TestBootstrapVersion_Comprehensive(t *testing.T) {
 				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
 		})
+	}
+}
+
+// --- FormatTagWithPrefix tests ---
+
+func TestFormatTagWithPrefix_V(t *testing.T) {
+	if got := FormatTagWithPrefix(Version{1, 2, 3}, "v"); got != "v1.2.3" {
+		t.Errorf("expected %q, got %q", "v1.2.3", got)
+	}
+}
+
+func TestFormatTagWithPrefix_Empty(t *testing.T) {
+	if got := FormatTagWithPrefix(Version{1, 2, 3}, ""); got != "1.2.3" {
+		t.Errorf("expected %q, got %q", "1.2.3", got)
+	}
+}
+
+func TestFormatTagWithPrefix_Custom(t *testing.T) {
+	if got := FormatTagWithPrefix(Version{1, 2, 3}, "release-"); got != "release-1.2.3" {
+		t.Errorf("expected %q, got %q", "release-1.2.3", got)
+	}
+}
+
+func TestFormatTagWithPrefix_MatchesTagMethod(t *testing.T) {
+	versions := []Version{{1, 2, 3}, {0, 0, 0}, {0, 1, 0}, {10, 20, 30}}
+	for _, v := range versions {
+		if got := FormatTagWithPrefix(v, "v"); got != v.Tag() {
+			t.Errorf("FormatTagWithPrefix(v, \"v\") = %q, v.Tag() = %q", got, v.Tag())
+		}
+	}
+}
+
+// --- ParseVersionFromTag tests ---
+
+func TestParseVersionFromTag_OK(t *testing.T) {
+	v, err := ParseVersionFromTag("v1.2.3", "v")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != (Version{1, 2, 3}) {
+		t.Errorf("expected Version{1,2,3}, got %v", v)
+	}
+}
+
+func TestParseVersionFromTag_CustomPrefix(t *testing.T) {
+	v, err := ParseVersionFromTag("release-2.0.0", "release-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != (Version{2, 0, 0}) {
+		t.Errorf("expected Version{2,0,0}, got %v", v)
+	}
+}
+
+func TestParseVersionFromTag_EmptyPrefix(t *testing.T) {
+	v, err := ParseVersionFromTag("1.2.3", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != (Version{1, 2, 3}) {
+		t.Errorf("expected Version{1,2,3}, got %v", v)
+	}
+}
+
+func TestParseVersionFromTag_WrongPrefix(t *testing.T) {
+	_, err := ParseVersionFromTag("v1.0.0", "release-")
+	if err == nil {
+		t.Error("expected error when tag does not start with prefix, got nil")
+	}
+}
+
+// --- DetectBumpType variadic rules tests ---
+
+func TestDetectBumpType_WithRules_Major(t *testing.T) {
+	rules := map[string]string{"breaking-change": "major"}
+	bump := DetectBumpType([]string{"breaking-change"}, rules)
+	if bump != BumpMajor {
+		t.Errorf("expected BumpMajor, got %v", bump)
+	}
+}
+
+func TestDetectBumpType_WithRules_Override(t *testing.T) {
+	rules := map[string]string{"docs": "minor"}
+	bump := DetectBumpType([]string{"docs"}, rules)
+	if bump != BumpMinor {
+		t.Errorf("expected BumpMinor, got %v", bump)
+	}
+}
+
+func TestDetectBumpType_WithRules_None(t *testing.T) {
+	// "none" is not a recognised level — treated as unknown → BumpNone
+	rules := map[string]string{"fix": "none"}
+	bump := DetectBumpType([]string{"fix"}, rules)
+	if bump != BumpNone {
+		t.Errorf("expected BumpNone, got %v", bump)
+	}
+}
+
+func TestDetectBumpType_WithRules_HighestWins(t *testing.T) {
+	rules := map[string]string{"feat": "minor", "fix": "major"}
+	bump := DetectBumpType([]string{"feat", "fix"}, rules)
+	if bump != BumpMajor {
+		t.Errorf("expected BumpMajor, got %v", bump)
+	}
+}
+
+// --- Built-in sentinel migration tests ---
+
+func TestDetectBumpType_BuiltinBreakingChange(t *testing.T) {
+	bump := DetectBumpType([]string{"breaking-change"})
+	if bump != BumpMajor {
+		t.Errorf("expected BumpMajor, got %v", bump)
+	}
+}
+
+func TestDetectBumpType_BuiltinBREAKING_CHANGE_Removed(t *testing.T) {
+	// Old "BREAKING CHANGE" (with space) sentinel is no longer in the built-in switch.
+	bump := DetectBumpType([]string{"BREAKING CHANGE"})
+	if bump != BumpNone {
+		t.Errorf("expected BumpNone (old sentinel removed), got %v", bump)
+	}
+}
+
+func TestDetectBumpType_NoRules_Feat(t *testing.T) {
+	bump := DetectBumpType([]string{"feat"})
+	if bump != BumpMinor {
+		t.Errorf("expected BumpMinor, got %v", bump)
+	}
+}
+
+func TestDetectBumpType_NoRules_Fix(t *testing.T) {
+	bump := DetectBumpType([]string{"fix"})
+	if bump != BumpPatch {
+		t.Errorf("expected BumpPatch, got %v", bump)
 	}
 }
 

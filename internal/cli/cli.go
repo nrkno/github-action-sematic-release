@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -20,7 +21,7 @@ import (
 
 // Interface injection for testing
 type GitClient interface {
-	FindLatestAnnotatedTag() (*git.Tag, error)
+	FindLatestAnnotatedTag(tagPrefix string) (*git.Tag, error)
 	FindTagByName(name string) (*git.Tag, error)
 	ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error)
 	CreateAnnotatedTag(name, message string) (*git.Tag, error)
@@ -71,17 +72,19 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 			if wd == "" {
 				wd = "."
 			}
-			cfg, cfgErr := conventional.LoadConfig(filepath.Join(wd, ".semrelrc.yml"))
+			cfgLoaded, cfgErr := conventional.LoadConfig(filepath.Join(wd, ".semrelrc.yml"))
 			if cfgErr != nil {
 				logger.Error("failed to load .semrelrc.yml", "error", cfgErr)
 				return cfgErr
 			}
-			lintOpts := conventional.DefaultLintOptions()
-			if cfg != nil {
-				lintOpts = conventional.LintOptions{
-					CapitalFirstLetter: cfg.Lint.Rules.CapitalFirstLetter,
-					RequireScope:       cfg.Lint.Rules.RequireScope,
-				}
+			cfg := conventional.DefaultConfig()
+			if cfgLoaded != nil {
+				cfg = *cfgLoaded
+			}
+			lintOpts := conventional.LintOptions{
+				CapitalFirstLetter: cfg.Lint.Rules.CapitalFirstLetter,
+				RequireScope:       cfg.Lint.Rules.RequireScope,
+				AllowedTypes:       cfg.CommitTypes.AllowedTypes,
 			}
 
 			// Determine lint range based on context
@@ -97,7 +100,7 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 			case "push", "release":
 				// Push/release context: previous tag → HEAD
 				if fromRef == "" {
-					tag, err := gitClient.FindLatestAnnotatedTag()
+					tag, err := gitClient.FindLatestAnnotatedTag(cfg.TagPrefix)
 					if err != nil {
 						logger.Error("failed to find latest tag", "error", err)
 						return err
@@ -131,7 +134,7 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 				// For now, we'll use ListCommitsSinceTag and filter
 				// This is a simplification; a full implementation would support arbitrary ranges
 				var tag *git.Tag
-				tag, err = gitClient.FindLatestAnnotatedTag()
+				tag, err = gitClient.FindLatestAnnotatedTag(cfg.TagPrefix)
 				if err != nil {
 					logger.Error("failed to find tag", "error", err)
 					return err
@@ -185,8 +188,46 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
+			// Step 1: Load config
+			wd := os.Getenv("INPUT_WORKING_DIRECTORY")
+			if wd == "" {
+				wd = "."
+			}
+			cfgLoaded, cfgErr := conventional.LoadConfig(filepath.Join(wd, ".semrelrc.yml"))
+			if cfgErr != nil {
+				logger.Error("failed to load .semrelrc.yml", "error", cfgErr)
+				return cfgErr
+			}
+			cfg := conventional.DefaultConfig()
+			if cfgLoaded != nil {
+				cfg = *cfgLoaded
+			}
+
+			// Step 2: Validate InitialVersion early (before any git/GitHub I/O)
+			if _, err := semver.ParseVersion(cfg.InitialVersion); err != nil {
+				return fmt.Errorf(".semrelrc.yml: invalid initial-version %q: %w", cfg.InitialVersion, err)
+			}
+
 			// Load environment
 			ghEnv := env.Load()
+
+			// Step 3: Branch guard
+			if len(cfg.ReleaseBranches) > 0 {
+				allowed := false
+				for _, pattern := range cfg.ReleaseBranches {
+					if ok, _ := path.Match(pattern, ghEnv.RefName); ok {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					logger.Info("skipping release: branch not in release-branches",
+						"branch", ghEnv.RefName,
+						"release-branches", cfg.ReleaseBranches,
+					)
+					return outputReleaseFields(ghEnv.Output, semver.Version{}, cfg.TagPrefix, false)
+				}
+			}
 
 			// Parse repository
 			parts := strings.Split(ghEnv.Repository, "/")
@@ -195,8 +236,8 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			}
 			owner, repo := parts[0], parts[1]
 
-			// Find latest tag
-			latestTag, err := gitClient.FindLatestAnnotatedTag()
+			// Step 4: Find latest tag using configured prefix
+			latestTag, err := gitClient.FindLatestAnnotatedTag(cfg.TagPrefix)
 			if err != nil {
 				logger.Error("failed to find latest tag", "error", err)
 				return err
@@ -225,6 +266,10 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				parsed.ShortSHA = c.ShortSHA
 				parsedCommits = append(parsedCommits, parsed)
 				commitTypes = append(commitTypes, string(parsed.Type))
+				// Step 5: Inject "breaking-change" sentinel for breaking commits
+				if parsed.Breaking {
+					commitTypes = append(commitTypes, "breaking-change")
+				}
 			}
 
 			// Log 1: commits in release
@@ -235,22 +280,23 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				"breaking", countBreaking(parsedCommits),
 			)
 
-			// Detect bump type
-			bump := semver.DetectBumpType(commitTypes)
+			// Step 6: Detect bump type with configured rules
+			bump := semver.DetectBumpType(commitTypes, cfg.BumpRules)
 
 			// Calculate next version
 			var currentVersion semver.Version
 			var nextVersion semver.Version
 			if latestTag == nil {
-				// Bootstrap: start at 0.0.1
-				nextVersion = semver.Version{Major: 0, Minor: 0, Patch: 1}
-				// Log 8: bootstrap case
+				// Step 7: Bootstrap using configured InitialVersion
+				baseVersion, _ := semver.ParseVersion(cfg.InitialVersion) // safe: validated above
+				nextVersion = semver.NextVersion(baseVersion, bump)
 				logger.Info("no prior annotated tags found — bootstrapping version",
-					"version", nextVersion.Tag(),
+					"initial-version", cfg.InitialVersion,
+					"version", semver.FormatTagWithPrefix(nextVersion, cfg.TagPrefix),
 				)
 			} else {
-				// Parse current version from tag
-				currentVersion, err = semver.ParseVersion(latestTag.Name)
+				// Step 8: Parse tag using configured prefix
+				currentVersion, err = semver.ParseVersionFromTag(latestTag.Name, cfg.TagPrefix)
 				if err != nil {
 					logger.Error("failed to parse version", "error", err)
 					return err
@@ -261,11 +307,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			// Log 2: bump detected
 			logger.Info("bump detected",
 				"type", bump.String(),
-				"from", currentVersion.Tag(),
-				"to", nextVersion.Tag(),
+				"from", semver.FormatTagWithPrefix(currentVersion, cfg.TagPrefix),
+				"to", semver.FormatTagWithPrefix(nextVersion, cfg.TagPrefix),
 			)
 
-			versionTag := nextVersion.Tag()
+			// Step 9: Format version tag with configured prefix
+			versionTag := semver.FormatTagWithPrefix(nextVersion, cfg.TagPrefix)
 
 			// Fetch PRs for all commits in this release (used in logs 3/4 and release notes)
 			prMap := fetchPRsForCommits(ctx, githubClient, owner, repo, parsedCommits, logger)
@@ -289,12 +336,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 						"title", pr.Title,
 						"url", pr.URL,
 					)
-			} else {
-				logger.Info("release triggered by commit",
-					"sha", triggerCommit.ShortSHA,
-					"message", commitSubject(triggerCommit.RawMessage),
-				)
-			}
+				} else {
+					logger.Info("release triggered by commit",
+						"sha", triggerCommit.ShortSHA,
+						"message", commitSubject(triggerCommit.RawMessage),
+					)
+				}
 			}
 
 			// Convert github.PR map to notes.PR map for release notes generation
@@ -306,7 +353,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			if err == nil && existingRelease != nil {
 				// Release exists, noop
 				logger.Info("release already exists", "tag", versionTag)
-				return outputReleaseFields(ghEnv.Output, nextVersion, false)
+				return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, false)
 			}
 
 			// Rung 2: Check whether the computed next-version tag already exists.
@@ -347,7 +394,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 					)
 				}
 				logger.Info("created release for existing tag", "tag", versionTag)
-				return outputReleaseFields(ghEnv.Output, nextVersion, true)
+				return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, true)
 			}
 			// Rung 3 (full flow) falls through here
 
@@ -401,7 +448,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			}
 
 			logger.Info("release created", "tag", versionTag)
-			return outputReleaseFields(ghEnv.Output, nextVersion, true)
+			return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, true)
 		},
 	}
 
@@ -488,6 +535,21 @@ func cmdNotes(gitClient GitClient, githubClient GitHubClient, logger *slog.Logge
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
+			// Load config
+			wd := os.Getenv("INPUT_WORKING_DIRECTORY")
+			if wd == "" {
+				wd = "."
+			}
+			notesCfg, notesCfgErr := conventional.LoadConfig(filepath.Join(wd, ".semrelrc.yml"))
+			if notesCfgErr != nil {
+				logger.Error("failed to load .semrelrc.yml", "error", notesCfgErr)
+				return notesCfgErr
+			}
+			notesCfgResolved := conventional.DefaultConfig()
+			if notesCfg != nil {
+				notesCfgResolved = *notesCfg
+			}
+
 			// Load environment
 			ghEnv := env.Load()
 
@@ -498,8 +560,8 @@ func cmdNotes(gitClient GitClient, githubClient GitHubClient, logger *slog.Logge
 			}
 			owner, repo := parts[0], parts[1]
 
-			// Find latest tag
-			latestTag, err := gitClient.FindLatestAnnotatedTag()
+			// Find latest tag using configured prefix
+			latestTag, err := gitClient.FindLatestAnnotatedTag(notesCfgResolved.TagPrefix)
 			if err != nil {
 				logger.Error("failed to find latest tag", "error", err)
 				return err
@@ -651,10 +713,10 @@ func commitSubject(message string) string {
 	return message
 }
 
-func outputReleaseFields(outputFile string, version semver.Version, released bool) error {
+func outputReleaseFields(outputFile string, version semver.Version, tagPrefix string, released bool) error {
 	fields := map[string]string{
 		"version":  version.String(),
-		"tag":      version.Tag(),
+		"tag":      semver.FormatTagWithPrefix(version, tagPrefix),
 		"major":    fmt.Sprintf("%d", version.Major),
 		"minor":    fmt.Sprintf("%d", version.Minor),
 		"patch":    fmt.Sprintf("%d", version.Patch),

@@ -37,7 +37,7 @@ type mockGitClient struct {
 	isShallowRepo      bool
 }
 
-func (m *mockGitClient) FindLatestAnnotatedTag() (*git.Tag, error) {
+func (m *mockGitClient) FindLatestAnnotatedTag(tagPrefix string) (*git.Tag, error) {
 	if m.isShallowRepo {
 		return nil, git.ShallowRepoError{Message: "repository is a shallow clone"}
 	}
@@ -407,7 +407,7 @@ func TestOutputReleaseFields(t *testing.T) {
 	tmpfile.Close()
 
 	version := semver.Version{Major: 1, Minor: 2, Patch: 3}
-	err = outputReleaseFields(tmpfile.Name(), version, true)
+	err = outputReleaseFields(tmpfile.Name(), version, "v", true)
 	if err != nil {
 		t.Errorf("outputReleaseFields should not error, got: %v", err)
 	}
@@ -423,6 +423,31 @@ func TestOutputReleaseFields(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(output), []byte("tag=v1.2.3")) {
 		t.Errorf("output should contain tag, got: %s", output)
+	}
+}
+
+func TestOutputReleaseFields_TagPrefix(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "semrel-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	tmpfile.Close()
+
+	version := semver.Version{Major: 1, Minor: 2, Patch: 3}
+	err = outputReleaseFields(tmpfile.Name(), version, "release-", true)
+	if err != nil {
+		t.Errorf("outputReleaseFields should not error, got: %v", err)
+	}
+
+	content, err := os.ReadFile(tmpfile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(content)
+	if !bytes.Contains([]byte(got), []byte("tag=release-1.2.3")) {
+		t.Errorf("output should contain tag=release-1.2.3, got: %s", got)
 	}
 }
 
@@ -619,5 +644,388 @@ func TestBumpTypeString(t *testing.T) {
 		if got := tc.bump.String(); got != tc.want {
 			t.Errorf("BumpType(%d).String() = %q, want %q", tc.bump, got, tc.want)
 		}
+	}
+}
+
+// ---------- New config-wiring tests ----------
+
+// TestCmdRelease_BranchGuard_NotInList verifies that a branch not in ReleaseBranches
+// causes the release to be skipped (released=false) without error.
+func TestCmdRelease_BranchGuard_NotInList(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "feature/foo")
+
+	// Write a temp .semrelrc.yml with release-branches: [main]
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	if err := os.WriteFile(rcPath, []byte("release-branches: [main]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	// Output file so outputReleaseFields doesn't fail
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: nil,
+		commits:   []git.Commit{},
+	}
+	githubClient := &mockGitHubClient{}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Errorf("branch guard (not in list) should not error, got: %v", err)
+	}
+
+	// Confirm no tag or release was created
+	if gitClient.createdTag != nil {
+		t.Error("no tag should have been created for skipped branch")
+	}
+}
+
+// TestCmdRelease_BranchGuard_Allowed verifies that a branch in ReleaseBranches proceeds normally.
+func TestCmdRelease_BranchGuard_Allowed(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "main")
+
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	if err := os.WriteFile(rcPath, []byte("release-branches: [main, master]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: nil,
+		commits: []git.Commit{
+			{SHA: "abc123def456", ShortSHA: "abc123d", Message: "feat: new feature"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Errorf("allowed branch should proceed without error, got: %v", err)
+	}
+}
+
+// TestCmdRelease_BranchGuard_GlobMatch verifies path.Match glob patterns work.
+func TestCmdRelease_BranchGuard_GlobMatch(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "releases/v2")
+
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	if err := os.WriteFile(rcPath, []byte("release-branches: [\"releases/*\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: nil,
+		commits: []git.Commit{
+			{SHA: "abc123def456", ShortSHA: "abc123d", Message: "feat: glob match"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Errorf("glob-matched branch should be allowed, got: %v", err)
+	}
+}
+
+// TestCmdRelease_BreakingChange_Injection verifies that a commit with Breaking=true
+// causes "breaking-change" to be injected into commitTypes → BumpMajor.
+func TestCmdRelease_BreakingChange_Injection(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "main")
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: newTestTag("v1.0.0", "oldsha"),
+		commits: []git.Commit{
+			{SHA: "aabbcc112233", ShortSHA: "aabbcc1", Message: "feat!: breaking API change\n\nBREAKING CHANGE: removed endpoint"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Errorf("breaking change commit should not error, got: %v", err)
+	}
+
+	// The output file should contain version=2.0.0 (major bump from v1.0.0)
+	content, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(content, []byte("version=2.0.0")) {
+		t.Errorf("expected major bump to 2.0.0, got: %s", content)
+	}
+}
+
+// TestCmdRelease_CustomBumpRules verifies that custom BumpRules override the defaults.
+func TestCmdRelease_CustomBumpRules(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "main")
+
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	// docs→minor; docs commit should produce a minor bump
+	if err := os.WriteFile(rcPath, []byte("bump-rules:\n  docs: minor\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: newTestTag("v1.0.0", "oldsha"),
+		commits: []git.Commit{
+			{SHA: "aabbcc112233", ShortSHA: "aabbcc1", Message: "docs: update readme"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Errorf("custom bump rules should not error, got: %v", err)
+	}
+
+	content, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// docs→minor from v1.0.0 → v1.1.0
+	if !bytes.Contains(content, []byte("version=1.1.0")) {
+		t.Errorf("expected minor bump to 1.1.0 with custom docs rule, got: %s", content)
+	}
+}
+
+// TestCmdRelease_Bootstrap_CustomInitialVersion verifies InitialVersion="2.0.0"
+// with a feat commit → nextVersion=2.1.0.
+func TestCmdRelease_Bootstrap_CustomInitialVersion(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "main")
+
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	if err := os.WriteFile(rcPath, []byte("initial-version: \"2.0.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: nil, // bootstrap: no tags
+		commits: []git.Commit{
+			{SHA: "aabb112233cc", ShortSHA: "aabb112", Message: "feat: initial feature"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Errorf("bootstrap with custom initial-version should not error, got: %v", err)
+	}
+
+	content, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// feat on 2.0.0 → 2.1.0
+	if !bytes.Contains(content, []byte("version=2.1.0")) {
+		t.Errorf("expected 2.1.0 with initial-version=2.0.0 + feat, got: %s", content)
+	}
+}
+
+// TestCmdRelease_Bootstrap_DefaultInitialVersion verifies that with no config,
+// InitialVersion="0.0.0" + fix → nextVersion=0.0.1.
+func TestCmdRelease_Bootstrap_DefaultInitialVersion(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "main")
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: nil, // bootstrap: no tags
+		commits: []git.Commit{
+			{SHA: "aabb112233cc", ShortSHA: "aabb112", Message: "fix: initial fix"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Errorf("default bootstrap should not error, got: %v", err)
+	}
+
+	content, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fix on 0.0.0 → 0.0.1
+	if !bytes.Contains(content, []byte("version=0.0.1")) {
+		t.Errorf("expected 0.0.1 with default initial-version + fix, got: %s", content)
+	}
+}
+
+// TestCmdRelease_TagPrefix_Custom verifies that a custom TagPrefix is used in version tag formatting.
+func TestCmdRelease_TagPrefix_Custom(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "main")
+
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	if err := os.WriteFile(rcPath, []byte("tag-prefix: \"release-\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: newTestTag("release-1.0.0", "oldsha"),
+		commits: []git.Commit{
+			{SHA: "aabb112233cc", ShortSHA: "aabb112", Message: "feat: new feature"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Errorf("custom tag prefix should not error, got: %v", err)
+	}
+
+	content, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// feat on release-1.0.0 → release-1.1.0
+	if !bytes.Contains(content, []byte("tag=release-1.1.0")) {
+		t.Errorf("expected tag=release-1.1.0, got: %s", content)
+	}
+}
+
+// TestCmdRelease_InvalidInitialVersion verifies that an invalid initial-version
+// returns an error before any git/GitHub I/O.
+func TestCmdRelease_InvalidInitialVersion(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	if err := os.WriteFile(rcPath, []byte("initial-version: \"not-semver\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	gitClient := &mockGitClient{}
+	githubClient := &mockGitHubClient{}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Error("invalid initial-version should return an error")
+	}
+
+	// No git I/O should have occurred
+	if gitClient.latestTag != nil || gitClient.pushedTag != "" {
+		t.Error("no git I/O should happen when initial-version is invalid")
 	}
 }

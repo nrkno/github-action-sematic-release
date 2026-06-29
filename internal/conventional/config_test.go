@@ -54,6 +54,135 @@ func TestLoadConfig_DefaultValues(t *testing.T) {
 	assert.False(t, cfg.Lint.Rules.RequireScope, "unset field should retain default value (false)")
 }
 
+// --- DefaultConfig new-field tests ---
+
+func TestDefaultConfig_TagPrefixIsV(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.Equal(t, "v", cfg.TagPrefix, "TagPrefix MUST default to 'v' — empty default silently strips the prefix from all future tags")
+}
+
+func TestDefaultConfig_NewFieldDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+
+	// BumpRules: exactly 3 entries
+	require.Len(t, cfg.BumpRules, 3)
+	assert.Equal(t, BumpLevelMajor, cfg.BumpRules["breaking-change"])
+	assert.Equal(t, BumpLevelMinor, cfg.BumpRules["feat"])
+	assert.Equal(t, BumpLevelPatch, cfg.BumpRules["fix"])
+
+	// ReleaseBranches
+	assert.Equal(t, []string{"main", "master"}, cfg.ReleaseBranches)
+
+	// InitialVersion
+	assert.Equal(t, "0.0.0", cfg.InitialVersion)
+}
+
+// --- LoadConfig new-field tests ---
+
+func TestLoadConfig_AllNewFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".semrelrc.yml")
+	content := `
+bump-rules:
+  breaking-change: major
+  feat: minor
+  fix: patch
+  chore: none
+release-branches:
+  - main
+  - release/*
+tag-prefix: "ver-"
+commit-types:
+  extra-types:
+    - custom
+  allowed-types:
+    - feat
+    - fix
+    - custom
+initial-version: "1.0.0"
+`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	cfg, err := LoadConfig(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, BumpLevelMajor, cfg.BumpRules["breaking-change"])
+	assert.Equal(t, BumpLevelMinor, cfg.BumpRules["feat"])
+	assert.Equal(t, BumpLevelPatch, cfg.BumpRules["fix"])
+	assert.Equal(t, BumpLevelNone, cfg.BumpRules["chore"])
+	assert.Equal(t, []string{"main", "release/*"}, cfg.ReleaseBranches)
+	assert.Equal(t, "ver-", cfg.TagPrefix)
+	assert.Equal(t, []string{"custom"}, cfg.CommitTypes.ExtraTypes)
+	assert.Equal(t, []CommitType{"feat", "fix", "custom"}, cfg.CommitTypes.AllowedTypes)
+	assert.Equal(t, "1.0.0", cfg.InitialVersion)
+}
+
+func TestLoadConfig_BumpRulesNilGuard_BareNull(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".semrelrc.yml")
+	content := "bump-rules:\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	cfg, err := LoadConfig(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	require.Len(t, cfg.BumpRules, 3, "bare null bump-rules should restore the 3 defaults")
+	assert.Equal(t, BumpLevelMajor, cfg.BumpRules["breaking-change"])
+	assert.Equal(t, BumpLevelMinor, cfg.BumpRules["feat"])
+	assert.Equal(t, BumpLevelPatch, cfg.BumpRules["fix"])
+}
+
+func TestLoadConfig_BumpRulesNilGuard_EmptyMap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".semrelrc.yml")
+	content := "bump-rules: {}\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	cfg, err := LoadConfig(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	require.Len(t, cfg.BumpRules, 3, "empty map bump-rules should restore the 3 defaults")
+}
+
+func TestLoadConfig_BumpRulesInvalidLevel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".semrelrc.yml")
+	content := "bump-rules:\n  feat: superminor\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	cfg, err := LoadConfig(path)
+	assert.Nil(t, cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid bump level")
+}
+
+func TestLoadConfig_TagPrefixDefault_Absent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".semrelrc.yml")
+	content := "lint:\n  rules:\n    require-scope: true\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	cfg, err := LoadConfig(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "v", cfg.TagPrefix, "absent tag-prefix should retain default 'v'")
+}
+
+func TestLoadConfig_TagPrefixEmpty_Explicit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".semrelrc.yml")
+	content := "tag-prefix: \"\"\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	cfg, err := LoadConfig(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "", cfg.TagPrefix, "explicit empty tag-prefix should be respected as user opt-in")
+}
+
 // --- ValidateAll option tests ---
 
 func TestValidateAll_CapitalFirstLetter_Disabled(t *testing.T) {

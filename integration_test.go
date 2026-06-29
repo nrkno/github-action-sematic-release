@@ -470,7 +470,7 @@ type testGitClient struct {
 	rawRepo *git.Repository
 }
 
-func (c *testGitClient) FindLatestAnnotatedTag() (*gitpkg.Tag, error) {
+func (c *testGitClient) FindLatestAnnotatedTag(tagPrefix string) (*gitpkg.Tag, error) {
 	if c.rawRepo == nil {
 		return nil, nil
 	}

@@ -141,6 +141,28 @@ directory instead.
 ### Full YAML schema
 
 ```yaml
+# Version bump level overrides. Valid levels: major, minor, patch, none.
+# Absent keys default to none; only listed keys are overridden.
+bump-rules:
+  breaking-change: major
+  feat: minor
+  fix: patch
+
+# Branch name patterns that allow `semrel release` to proceed (path.Match syntax).
+release-branches: [main, master]
+
+# String prepended to the version number when creating git tags.
+tag-prefix: "v"
+
+commit-types:
+  # Additional commit types accepted by `semrel lint`, added to the built-in set.
+  extra-types: []
+  # Full replacement for the built-in type set. Takes precedence over extra-types.
+  allowed-types: []
+
+# Baseline version for the bootstrap case (first release, no annotated tags).
+initial-version: "0.0.0"
+
 lint:
   rules:
     # Fail if a commit description starts with an uppercase letter.
@@ -188,6 +210,72 @@ lint:
   rules:
     require-scope: true
 ```
+
+### Top-level field reference
+
+#### `bump-rules` (map, default: `{breaking-change: major, feat: minor, fix: patch}`)
+
+Maps commit types — and the sentinel `breaking-change` — to version bump levels.
+Valid levels: `major`, `minor`, `patch`, `none`.
+
+Absent keys default to `none`. Entries overlay the defaults; specifying only
+`chore: patch` keeps `feat→minor`, `fix→patch`, and `breaking-change→major` unchanged.
+
+To suppress all bumps ("freeze" mode), set every key to `none` explicitly.
+A bare `bump-rules:` key (YAML null) restores the three defaults.
+
+Example — add patch bump for chore and suppress fix bumps:
+```yaml
+bump-rules:
+  chore: patch
+  fix: none
+```
+
+#### `release-branches` (list, default: `[main, master]`)
+
+Branch name patterns that allow `semrel release` to proceed. Uses `path.Match`
+syntax. `*` matches a single path segment and does NOT cross `/` boundaries.
+
+Example — single branch:
+```yaml
+release-branches: [main]
+```
+
+#### `tag-prefix` (string, default: `"v"`)
+
+String prepended to the version number when creating git tags.
+Default `"v"` produces tags like `v1.2.3`.
+Set `""` for bare version tags (`1.2.3`).
+
+**Important**: changing this on a repository with existing `v`-prefixed tags
+will cause semrel to stop finding those tags. Set this only for new repositories
+or when migrating the entire tag history.
+
+#### `commit-types.extra-types` (list, default: `[]`)
+
+Additional commit types accepted by `semrel lint`, added on top of the built-in
+set (feat, fix, chore, docs, ci, refactor, test, perf, build, revert).
+
+Example:
+```yaml
+commit-types:
+  extra-types: [deps, security]
+```
+
+#### `commit-types.allowed-types` (list, default: `[]`)
+
+Full replacement for the built-in type set. When non-empty, `semrel lint`
+only accepts the listed types. Takes precedence over `extra-types`.
+
+#### `initial-version` (string, default: `"0.0.0"`)
+
+Baseline version for the bootstrap case (first release when no annotated tags exist).
+The detected bump is applied on top of this value.
+
+| initial-version | first fix → | first feat → | first breaking → |
+|---|---|---|---|
+| `0.0.0` (default) | `v0.0.1` | `v0.1.0` | `v1.0.0` |
+| `1.0.0` | `v1.0.1` | `v1.1.0` | `v2.0.0` |
 
 ### Behaviour when the file is absent
 

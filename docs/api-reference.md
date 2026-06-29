@@ -34,6 +34,10 @@ working directory and uses it to override default rule settings. See
 [Configuration — Lint configuration file](/docs/configuration.md#lint-configuration-file-semrelrcyml)
 for the full schema and available rules.
 
+`commit-types.allowed-types` (when non-empty) fully replaces the built-in commit
+type set; only the listed types will pass lint. Use `commit-types.extra-types` to
+add types on top of the built-in set without replacing it.
+
 ### Synopsis
 
 ```
@@ -84,6 +88,11 @@ commit abc1234: missing type
 
 Computes the next semantic version from conventional commits, creates an annotated
 git tag, pushes it, and creates a GitHub Release.
+
+`release-branches` (`.semrelrc.yml`) gates execution: if the current branch does
+not match any listed pattern, `semrel release` exits 0 without creating a release.
+`bump-rules` controls which commit types trigger a version bump and at which level.
+`tag-prefix` controls the string prepended to the version number in git tags (default `"v"`).
 
 ### Synopsis
 

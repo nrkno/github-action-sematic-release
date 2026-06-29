@@ -2,6 +2,7 @@ package semver
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 )
@@ -29,6 +30,9 @@ func (v Version) String() string {
 }
 
 // Tag returns the version as a git tag "vX.Y.Z".
+//
+// Deprecated: use FormatTagWithPrefix(v, "v") for configurable prefix support.
+// This method hardcodes the "v" prefix and cannot reflect a custom tag-prefix.
 func (v Version) Tag() string {
 	return fmt.Sprintf("v%d.%d.%d", v.Major, v.Minor, v.Patch)
 }
@@ -97,16 +101,48 @@ func (b BumpType) String() string {
 }
 
 // DetectBumpType analyzes commit types and returns the appropriate bump type.
-// Types: "feat" → BumpMinor, "fix" → BumpPatch, "BREAKING CHANGE" → BumpMajor
-// If multiple types present, highest bump wins (Major > Minor > Patch).
-// If no recognized types, returns BumpNone.
-func DetectBumpType(commitTypes []string) BumpType {
-	maxBump := BumpNone
+// An optional rules map (map[string]string) overrides the built-in mapping.
+// Built-in: "breaking-change"→BumpMajor, "feat"→BumpMinor, "fix"→BumpPatch.
+//
+// IMPORTANT: "BREAKING CHANGE" (with space) is NOT a trigger in the built-in
+// switch. Callers must inject "breaking-change" (hyphenated) into commitTypes
+// for commits with a "!" suffix or "BREAKING CHANGE:" footer.
+//
+// The variadic parameter accepts map[string]string (compatible with
+// conventional.BumpRules = map[string]BumpLevel = map[string]string).
+func DetectBumpType(commitTypes []string, rules ...map[string]string) BumpType {
+	if len(rules) > 0 && len(rules[0]) > 0 {
+		r := rules[0]
+		highest := BumpNone
+		for _, ct := range commitTypes {
+			level, ok := r[ct]
+			if !ok {
+				continue
+			}
+			var b BumpType
+			switch level {
+			case "major":
+				b = BumpMajor
+			case "minor":
+				b = BumpMinor
+			case "patch":
+				b = BumpPatch
+			default:
+				continue
+			}
+			if b > highest {
+				highest = b
+			}
+		}
+		return highest
+	}
 
+	// Built-in rules
+	maxBump := BumpNone
 	for _, ct := range commitTypes {
 		var bump BumpType
 		switch ct {
-		case "BREAKING CHANGE":
+		case "breaking-change":
 			bump = BumpMajor
 		case "feat":
 			bump = BumpMinor
@@ -129,12 +165,32 @@ func DetectBumpType(commitTypes []string) BumpType {
 // BootstrapVersion returns the initial version when no tags exist.
 // First "feat" commit → v0.1.0
 // First "fix" commit → v0.0.1
-// "BREAKING CHANGE" → v1.0.0
+// "breaking-change" → v1.0.0
 // No commits or unrecognized types → v0.0.0
 func BootstrapVersion(commitTypes []string) Version {
 	bump := DetectBumpType(commitTypes)
 	// Start from v0.0.0 and apply the bump
 	return NextVersion(Version{0, 0, 0}, bump)
+}
+
+// FormatTagWithPrefix formats a version as a git tag with the given prefix.
+// prefix="v" → "v1.2.3"; prefix="" → "1.2.3"; prefix="release-" → "release-1.2.3".
+// Use this instead of Version.Tag() when tag-prefix is configurable.
+func FormatTagWithPrefix(v Version, prefix string) string {
+	return prefix + v.String()
+}
+
+// ParseVersionFromTag strips the given prefix from tagName, then calls ParseVersion.
+// Returns an error if tagName does not start with prefix.
+// Example: ParseVersionFromTag("v1.2.3", "v") → Version{1,2,3}
+//
+//	ParseVersionFromTag("release-2.0.0", "release-") → Version{2,0,0}
+//	ParseVersionFromTag("1.2.3", "") → Version{1,2,3}
+func ParseVersionFromTag(tagName, prefix string) (Version, error) {
+	if !strings.HasPrefix(tagName, prefix) {
+		return Version{}, fmt.Errorf("tag %q does not start with prefix %q", tagName, prefix)
+	}
+	return ParseVersion(strings.TrimPrefix(tagName, prefix))
 }
 
 // FormatVersion formats a version for output (e.g., "1.2.3").

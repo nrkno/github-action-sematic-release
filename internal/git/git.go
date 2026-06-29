@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -89,8 +90,9 @@ func OpenRepo(path string) (*Repository, error) {
 }
 
 // FindLatestAnnotatedTag finds the latest annotated tag in the repository.
-// Returns nil, nil if no annotated tags exist (bootstrap case).
-func (r *Repository) FindLatestAnnotatedTag() (*Tag, error) {
+// If tagPrefix is non-empty, only tags with that prefix are considered.
+// Returns nil, nil if no matching annotated tags exist (bootstrap case).
+func (r *Repository) FindLatestAnnotatedTag(tagPrefix string) (*Tag, error) {
 	tags, err := r.raw.Tags()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tags: %w", err)
@@ -105,11 +107,16 @@ func (r *Repository) FindLatestAnnotatedTag() (*Tag, error) {
 			return nil
 		}
 
+		name := ref.Name().Short()
+		if tagPrefix != "" && !strings.HasPrefix(name, tagPrefix) {
+			return nil
+		}
+
 		// Get the target commit SHA
 		targetSHA := obj.Target.String()
 
 		tag := &Tag{
-			Name:      ref.Name().Short(),
+			Name:      name,
 			SHA:       obj.Hash.String(),
 			targetSHA: targetSHA,
 		}

@@ -196,7 +196,7 @@ func TestFindLatestAnnotatedTag_BootstrapNoTags(t *testing.T) {
 	createCommit(t, repo, "file.txt", "content", "initial commit")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag()
+	tag, err := r.FindLatestAnnotatedTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -213,7 +213,7 @@ func TestFindLatestAnnotatedTag_SingleTag(t *testing.T) {
 	createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag()
+	tag, err := r.FindLatestAnnotatedTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -238,7 +238,7 @@ func TestFindLatestAnnotatedTag_MultipleTags(t *testing.T) {
 	tag2Obj := createAnnotatedTag(t, repo, "v1.1.0", "Release 1.1.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag()
+	tag, err := r.FindLatestAnnotatedTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -277,7 +277,7 @@ func TestFindLatestAnnotatedTag_IgnoresLightweightTags(t *testing.T) {
 	}
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag()
+	tag, err := r.FindLatestAnnotatedTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -492,7 +492,7 @@ func TestTag_TargetSHA_DistinctFromTagSHA(t *testing.T) {
 	tagObj := createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag()
+	tag, err := r.FindLatestAnnotatedTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -574,7 +574,7 @@ func TestTag_NameWithoutRefsPrefix(t *testing.T) {
 	createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag()
+	tag, err := r.FindLatestAnnotatedTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
