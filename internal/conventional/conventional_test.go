@@ -583,6 +583,21 @@ func TestIsMergeCommit(t *testing.T) {
 			message: "  Merge branch feature",
 			want:    true,
 		},
+		{
+			name:    "GitHub Actions CI merge commit (sha into sha)",
+			message: "Merge 30200f20fcea3c9781f1b8a3d664ffcb93907c27 into ba5266b339a6155fe4acf82be393a1a3d9a54cba",
+			want:    true,
+		},
+		{
+			name:    "GitHub Actions CI merge commit short SHAs",
+			message: "Merge abc1234 into def5678",
+			want:    true,
+		},
+		{
+			name:    "Merge remote-tracking branch",
+			message: "Merge remote-tracking branch 'origin/main'",
+			want:    true,
+		},
 	}
 
 	for _, tt := range tests {
