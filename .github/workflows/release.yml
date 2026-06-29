@@ -56,16 +56,27 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: builddate
         run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ needs.release.outputs.tag }}
+            type=sha,prefix=sha-,format=short
       - id: push
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:${{ needs.release.outputs.tag }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ needs.release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ steps.builddate.outputs.date }}
+          provenance: mode=max
+          sbom: true
       - uses: sigstore/cosign-installer@v3
       # Sign by digest so the signature is bound to immutable content, not a
       # mutable tag.
