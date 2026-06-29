@@ -466,6 +466,37 @@ func TestListCommitsBetweenTags(t *testing.T) {
 	}
 }
 
+// TestListCommitsBetweenTagsNilFrom tests that nil from walks all commits back to root
+func TestListCommitsBetweenTagsNilFrom(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	createCommit(t, repo, "file.txt", "content 1", "commit 1")
+	createCommit(t, repo, "file.txt", "content 2", "commit 2")
+	createCommit(t, repo, "file.txt", "content 3", "commit 3")
+	tagObj := createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
+
+	r := &Repository{raw: repo}
+	tag := &Tag{
+		Name:      "v1.0.0",
+		SHA:       tagObj.Hash.String(),
+		targetSHA: tagObj.Target.String(),
+	}
+
+	commits, err := r.ListCommitsBetweenTags(nil, tag)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(commits) != 3 {
+		t.Errorf("expected 3 commits (all from root), got %d", len(commits))
+	}
+	if commits[0].Message != "commit 3" {
+		t.Errorf("expected first commit to be 'commit 3', got %q", commits[0].Message)
+	}
+	if commits[2].Message != "commit 1" {
+		t.Errorf("expected last commit to be 'commit 1', got %q", commits[2].Message)
+	}
+}
+
 // TestCreateAnnotatedTag tests creating an annotated tag
 func TestCreateAnnotatedTag(t *testing.T) {
 	repo := createInMemoryRepo(t)

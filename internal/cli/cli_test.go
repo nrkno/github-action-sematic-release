@@ -35,6 +35,10 @@ type mockGitClient struct {
 	pushedTag          string
 	pushTagErr         error
 	isShallowRepo      bool
+	previousTag        *git.Tag
+	previousTagErr     error
+	commitsBetween     []git.Commit
+	commitsBetweenErr  error
 }
 
 func (m *mockGitClient) FindLatestAnnotatedTag(tagPrefix string) (*git.Tag, error) {
@@ -65,19 +69,29 @@ func (m *mockGitClient) PushTag(ctx context.Context, tagName string, auth git.Ba
 	return m.pushTagErr
 }
 
+func (m *mockGitClient) FindPreviousAnnotatedTag(current *git.Tag) (*git.Tag, error) {
+	return m.previousTag, m.previousTagErr
+}
+
+func (m *mockGitClient) ListCommitsBetweenTags(from, to *git.Tag) ([]git.Commit, error) {
+	return m.commitsBetween, m.commitsBetweenErr
+}
+
 type mockGitHubClient struct {
-	releaseByTag    *github.Release
-	releaseByTagErr error
-	createdRelease  *github.Release
+	releaseByTag     *github.Release
+	releaseByTagErr  error
+	createdRelease   *github.Release
 	createReleaseErr error
-	prs             []github.PR
-	prsErr          error
-	searchPRs       []github.PR
-	searchPRsErr    error
-	commentPosted   bool
-	commentErr      error
-	commentExists   bool
-	findCommentErr  error
+	prs              []github.PR
+	prsErr           error
+	prsPerSHA        map[string][]github.PR // per-SHA override; if set, returned instead of prs
+	searchPRs        []github.PR
+	searchPRsErr     error
+	commentPosted    bool
+	commentPostCount int
+	commentErr       error
+	commentExists    bool
+	findCommentErr   error
 }
 
 func (m *mockGitHubClient) GetReleaseByTag(ctx context.Context, owner, repo, tag string) (*github.Release, error) {
@@ -96,6 +110,12 @@ func (m *mockGitHubClient) CreateRelease(ctx context.Context, owner, repo string
 }
 
 func (m *mockGitHubClient) ListPRsForCommit(ctx context.Context, owner, repo, sha string) ([]github.PR, error) {
+	if m.prsPerSHA != nil {
+		if prs, ok := m.prsPerSHA[sha]; ok {
+			return prs, m.prsErr
+		}
+		return nil, m.prsErr
+	}
 	return m.prs, m.prsErr
 }
 
@@ -105,6 +125,7 @@ func (m *mockGitHubClient) SearchPRsForCommit(ctx context.Context, query string)
 
 func (m *mockGitHubClient) PostPRComment(ctx context.Context, owner, repo string, prNumber int, body string) error {
 	m.commentPosted = true
+	m.commentPostCount++
 	return m.commentErr
 }
 
@@ -242,76 +263,154 @@ func TestReleaseIdempotentExists(t *testing.T) {
 	}
 }
 
-func TestNotifySkippedWhenNotReleased(t *testing.T) {
+func TestNotifySkippedWhenTagNotSet(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// SEMREL_TAG deliberately not set
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
 
-	t.Setenv("SEMREL_RELEASED", "false")
-	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
-
+	gitClient := &mockGitClient{}
 	githubClient := &mockGitHubClient{}
 
-	cmd := cmdNotify(githubClient, logger)
-	cmd.SetArgs([]string{})
+	root := Root(gitClient, githubClient, logger)
+	root.SetArgs([]string{"notify"})
 
-	err := cmd.ExecuteContext(context.Background())
+	err := root.ExecuteContext(context.Background())
 	if err != nil {
-		t.Errorf("notify with SEMREL_RELEASED=false should not error, got: %v", err)
+		t.Errorf("notify without SEMREL_TAG should not error, got: %v", err)
 	}
-
-	if githubClient.commentPosted {
-		t.Error("notify should not post comment when SEMREL_RELEASED=false")
+	if githubClient.commentPostCount != 0 {
+		t.Errorf("expected 0 comments posted, got %d", githubClient.commentPostCount)
 	}
 }
 
-func TestNotifyPostsComment(t *testing.T) {
+func TestNotifyPostsCommentOnAllPRs(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-
-	t.Setenv("SEMREL_RELEASED", "true")
-	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
+	t.Setenv("SEMREL_TAG", "v1.3.0")
 	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
-	t.Setenv("GITHUB_REF", "refs/pull/42/merge")
-	t.Setenv("SEMREL_VERSION", "v1.0.0")
 
+	gitClient := &mockGitClient{
+		findTagByNameTag: newTestTag("v1.3.0", "sha-released"),
+		previousTag:      nil,
+		commitsBetween: []git.Commit{
+			{SHA: "sha1", ShortSHA: "sha1"},
+			{SHA: "sha2", ShortSHA: "sha2"},
+		},
+	}
 	githubClient := &mockGitHubClient{
+		prsPerSHA: map[string][]github.PR{
+			"sha1": {{Number: 1, URL: "https://github.com/owner/repo/pull/1"}},
+			"sha2": {{Number: 2, URL: "https://github.com/owner/repo/pull/2"}},
+		},
 		commentExists: false,
 	}
 
-	cmd := cmdNotify(githubClient, logger)
-	cmd.SetArgs([]string{})
+	root := Root(gitClient, githubClient, logger)
+	root.SetArgs([]string{"notify"})
 
-	err := cmd.ExecuteContext(context.Background())
+	err := root.ExecuteContext(context.Background())
 	if err != nil {
 		t.Errorf("notify should not error, got: %v", err)
 	}
+	if githubClient.commentPostCount != 2 {
+		t.Errorf("expected 2 comments posted, got %d", githubClient.commentPostCount)
+	}
+}
 
-	if !githubClient.commentPosted {
-		t.Error("notify should post comment")
+func TestNotifyDeduplicatesPRs(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("SEMREL_TAG", "v1.3.0")
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+
+	gitClient := &mockGitClient{
+		findTagByNameTag: newTestTag("v1.3.0", "sha-released"),
+		previousTag:      nil,
+		commitsBetween: []git.Commit{
+			{SHA: "sha1", ShortSHA: "sha1"},
+			{SHA: "sha2", ShortSHA: "sha2"},
+		},
+	}
+	pr1 := github.PR{Number: 1, URL: "https://github.com/owner/repo/pull/1"}
+	githubClient := &mockGitHubClient{
+		prsPerSHA: map[string][]github.PR{
+			"sha1": {pr1},
+			"sha2": {pr1}, // same PR for both commits
+		},
+		commentExists: false,
+	}
+
+	root := Root(gitClient, githubClient, logger)
+	root.SetArgs([]string{"notify"})
+
+	err := root.ExecuteContext(context.Background())
+	if err != nil {
+		t.Errorf("notify should not error, got: %v", err)
+	}
+	if githubClient.commentPostCount != 1 {
+		t.Errorf("expected 1 comment posted (deduplicated), got %d", githubClient.commentPostCount)
 	}
 }
 
 func TestNotifyIdempotent(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-
-	t.Setenv("SEMREL_RELEASED", "true")
-	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
+	t.Setenv("SEMREL_TAG", "v1.3.0")
 	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
-	t.Setenv("GITHUB_REF", "refs/pull/42/merge")
-	t.Setenv("SEMREL_VERSION", "v1.0.0")
 
+	gitClient := &mockGitClient{
+		findTagByNameTag: newTestTag("v1.3.0", "sha-released"),
+		previousTag:      nil,
+		commitsBetween: []git.Commit{
+			{SHA: "sha1", ShortSHA: "sha1"},
+		},
+	}
 	githubClient := &mockGitHubClient{
-		commentExists: true,
+		prsPerSHA: map[string][]github.PR{
+			"sha1": {{Number: 1, URL: "https://github.com/owner/repo/pull/1"}},
+		},
+		commentExists: true, // marker already present
 	}
 
-	cmd := cmdNotify(githubClient, logger)
-	cmd.SetArgs([]string{})
+	root := Root(gitClient, githubClient, logger)
+	root.SetArgs([]string{"notify"})
 
-	err := cmd.ExecuteContext(context.Background())
+	err := root.ExecuteContext(context.Background())
 	if err != nil {
-		t.Errorf("notify idempotent should not error, got: %v", err)
+		t.Errorf("idempotent notify should not error, got: %v", err)
+	}
+	if githubClient.commentPostCount != 0 {
+		t.Errorf("expected 0 comments posted (already exists), got %d", githubClient.commentPostCount)
+	}
+}
+
+func TestNotifySkipsCommitsWithNoPRs(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("SEMREL_TAG", "v1.3.0")
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+
+	gitClient := &mockGitClient{
+		findTagByNameTag: newTestTag("v1.3.0", "sha-released"),
+		previousTag:      nil,
+		commitsBetween: []git.Commit{
+			{SHA: "sha-a", ShortSHA: "sha-a"},
+			{SHA: "sha-b", ShortSHA: "sha-b"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		prsPerSHA: map[string][]github.PR{
+			"sha-a": {{Number: 1, URL: "https://github.com/owner/repo/pull/1"}},
+			// sha-b returns empty (no PR)
+		},
+		commentExists: false,
 	}
 
-	if githubClient.commentPosted {
-		t.Error("notify should not post comment when it already exists")
+	root := Root(gitClient, githubClient, logger)
+	root.SetArgs([]string{"notify"})
+
+	err := root.ExecuteContext(context.Background())
+	if err != nil {
+		t.Errorf("notify should not error when some commits have no PRs, got: %v", err)
+	}
+	if githubClient.commentPostCount != 1 {
+		t.Errorf("expected 1 comment posted (only PR from sha-a), got %d", githubClient.commentPostCount)
 	}
 }
 

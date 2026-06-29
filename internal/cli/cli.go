@@ -23,7 +23,9 @@ import (
 type GitClient interface {
 	FindLatestAnnotatedTag(tagPrefix string) (*git.Tag, error)
 	FindTagByName(name string) (*git.Tag, error)
+	FindPreviousAnnotatedTag(current *git.Tag) (*git.Tag, error)
 	ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error)
+	ListCommitsBetweenTags(from, to *git.Tag) ([]git.Commit, error)
 	CreateAnnotatedTag(name, message string) (*git.Tag, error)
 	PushTag(ctx context.Context, tagName string, auth git.BasicAuth) error
 }
@@ -48,7 +50,7 @@ func Root(gitClient GitClient, githubClient GitHubClient, logger *slog.Logger) *
 
 	root.AddCommand(cmdLint(gitClient, logger))
 	root.AddCommand(cmdRelease(gitClient, githubClient, logger))
-	root.AddCommand(cmdNotify(githubClient, logger))
+	root.AddCommand(cmdNotify(gitClient, githubClient, logger))
 	root.AddCommand(cmdNotes(gitClient, githubClient, logger))
 
 	return root
@@ -457,74 +459,130 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 	return cmd
 }
 
-// cmdNotify posts a PR comment with release info
-func cmdNotify(githubClient GitHubClient, logger *slog.Logger) *cobra.Command {
-	cmd := &cobra.Command{
+// cmdNotify posts release comments on all PRs included in the release.
+// Designed to be triggered by on: release: types: [published] — NOT push events.
+// Required env: SEMREL_TAG (the released tag, e.g. "v1.3.0")
+// Optional env: SEMREL_RELEASE_URL (constructed from GITHUB_SERVER_URL if absent)
+func cmdNotify(gitClient GitClient, githubClient GitHubClient, logger *slog.Logger) *cobra.Command {
+	return &cobra.Command{
 		Use:   "notify",
-		Short: "Post PR comment with release info",
+		Short: "Post release comments on all PRs included in the release",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-
-			// Load environment
 			ghEnv := env.Load()
 
-			// Check if released flag is set to false
-			released := os.Getenv("SEMREL_RELEASED")
-			if released == "false" {
-				logger.Info("skipping notify: SEMREL_RELEASED=false")
+			// SEMREL_TAG is required — absent means this wasn't triggered by a real release
+			semrelTag := os.Getenv("SEMREL_TAG")
+			if semrelTag == "" {
+				logger.Info("skipping notify: SEMREL_TAG not set")
 				return nil
 			}
 
-			// Only run on PR events
-			if ghEnv.EventName != "pull_request" {
-				logger.Info("skipping notify: not a pull request event")
-				return nil
-			}
-
-			if ghEnv.PRNumber == 0 {
-				return fmt.Errorf("PR number not found in environment")
-			}
-
-			// Parse repository
+			// Parse owner/repo
 			parts := strings.Split(ghEnv.Repository, "/")
 			if len(parts) != 2 {
 				return fmt.Errorf("invalid repository format: %s", ghEnv.Repository)
 			}
 			owner, repo := parts[0], parts[1]
 
-			// Get version from environment
-			version := os.Getenv("SEMREL_VERSION")
-			if version == "" {
-				version = "unknown"
+			// Build release URL
+			releaseURL := os.Getenv("SEMREL_RELEASE_URL")
+			if releaseURL == "" {
+				releaseURL = fmt.Sprintf("%s/%s/releases/tag/%s",
+					ghEnv.ServerURL, ghEnv.Repository, semrelTag)
 			}
 
-			// Check if comment already exists
-			marker := fmt.Sprintf("<!-- semrel-notify:%s -->", version)
-			found, err := githubClient.FindPRComment(ctx, owner, repo, ghEnv.PRNumber, marker)
+			// Load config for TagPrefix
+			wd := os.Getenv("INPUT_WORKING_DIRECTORY")
+			if wd == "" {
+				wd = "."
+			}
+			cfgLoaded, cfgErr := conventional.LoadConfig(filepath.Join(wd, ".semrelrc.yml"))
+			if cfgErr != nil {
+				logger.Error("failed to load .semrelrc.yml", "error", cfgErr)
+				return cfgErr
+			}
+			cfg := conventional.DefaultConfig()
+			if cfgLoaded != nil {
+				cfg = *cfgLoaded
+			}
+			_ = cfg // TagPrefix reserved for future filtering
+
+			// Find the released tag in git
+			releasedTag, err := gitClient.FindTagByName(semrelTag)
 			if err != nil {
-				logger.Error("failed to check for existing comment", "error", err)
-				return err
+				return fmt.Errorf("failed to look up released tag %q: %w", semrelTag, err)
+			}
+			if releasedTag == nil {
+				return fmt.Errorf("released tag %q not found in repository — ensure fetch-tags: true in checkout", semrelTag)
 			}
 
-			if found {
-				logger.Info("comment already exists", "pr", ghEnv.PRNumber)
+			// Find the previous tag (nil = first release)
+			prevTag, err := gitClient.FindPreviousAnnotatedTag(releasedTag)
+			if err != nil {
+				return fmt.Errorf("failed to find previous tag: %w", err)
+			}
+
+			// List all commits in this release
+			commits, err := gitClient.ListCommitsBetweenTags(prevTag, releasedTag)
+			if err != nil {
+				return fmt.Errorf("failed to list commits: %w", err)
+			}
+
+			logger.Info("commits in release for notification",
+				"tag", semrelTag,
+				"prev_tag", func() string {
+					if prevTag != nil {
+						return prevTag.Name
+					}
+					return "(none)"
+				}(),
+				"count", len(commits),
+			)
+
+			// Collect unique PRs across all commits
+			prMap := make(map[int]github.PR)
+			for _, commit := range commits {
+				prs, err := githubClient.ListPRsForCommit(ctx, owner, repo, commit.SHA)
+				if err != nil {
+					logger.Warn("failed to list PRs for commit", "sha", commit.ShortSHA, "error", err)
+					continue
+				}
+				for _, pr := range prs {
+					prMap[pr.Number] = pr
+				}
+			}
+
+			if len(prMap) == 0 {
+				logger.Info("no PRs found for release", "tag", semrelTag)
 				return nil
 			}
 
-			// Post comment
-			body := fmt.Sprintf("%s\n🎉 Release %s created!", marker, version)
-			err = githubClient.PostPRComment(ctx, owner, repo, ghEnv.PRNumber, body)
-			if err != nil {
-				logger.Error("failed to post comment", "error", err)
-				return err
+			// Post idempotent comment on each PR
+			marker := fmt.Sprintf("<!-- semrel-notify:%s -->", semrelTag)
+			body := fmt.Sprintf("%s\n🎉 This pull request has been included in release [%s](%s).",
+				marker, semrelTag, releaseURL)
+
+			for _, pr := range prMap {
+				found, err := githubClient.FindPRComment(ctx, owner, repo, pr.Number, marker)
+				if err != nil {
+					logger.Error("failed to check existing comment", "pr", pr.Number, "error", err)
+					return err
+				}
+				if found {
+					logger.Info("comment already exists, skipping", "pr", pr.Number)
+					continue
+				}
+				if err := githubClient.PostPRComment(ctx, owner, repo, pr.Number, body); err != nil {
+					logger.Error("failed to post comment", "pr", pr.Number, "error", err)
+					return err
+				}
+				logger.Info("posted release comment", "pr", pr.Number, "tag", semrelTag)
 			}
 
-			logger.Info("comment posted", "pr", ghEnv.PRNumber)
 			return nil
 		},
 	}
-
-	return cmd
 }
 
 // cmdNotes generates release notes

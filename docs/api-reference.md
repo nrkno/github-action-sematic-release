@@ -3,7 +3,7 @@ type: API Reference
 title: semrel API reference
 description: Complete reference for all semrel subcommands — synopsis, flags, exit codes, stdout/stderr behaviour, and GITHUB_OUTPUT fields emitted.
 tags: [api-reference, subcommands, exit-codes, flags, github-output]
-timestamp: 2026-06-29
+timestamp: 2026-06-30
 ---
 
 # API reference
@@ -156,7 +156,18 @@ for the three-rung precedence logic.
 
 ## `semrel notify`
 
-Posts a deduplicated comment on the merged PR announcing the new release version.
+Posts a deduplicated comment on every merged PR that is included in a published
+GitHub Release. It is designed to run in a **separate `notify.yml` workflow**
+triggered by `on: release: types: [published]`, not as a job inside the release
+pipeline.
+
+### Trigger
+
+```yaml
+on:
+  release:
+    types: [published]
+```
 
 ### Synopsis
 
@@ -168,34 +179,48 @@ semrel notify
 
 None.
 
+### Environment variables
+
+| Variable | Required | Description |
+| -------- | -------- | ----------- |
+| `SEMREL_TAG` | **Yes** | Full tag name of the published release (e.g. `v1.3.0`). Set from `${{ github.event.release.tag_name }}`. When absent, `notify` exits 0 as a no-op. |
+| `SEMREL_RELEASE_URL` | No | HTML URL of the published GitHub Release. Constructed from `GITHUB_SERVER_URL/GITHUB_REPOSITORY/releases/tag/SEMREL_TAG` if absent. |
+| `SEMREL_VERSION` | No | Version string without the `v` prefix. Used for display purposes only. |
+
+### What it does
+
+1. Reads `SEMREL_TAG` to identify the released tag.
+2. Finds the previous annotated tag in the repository.
+3. Enumerates all commits between the previous tag and the released tag.
+4. For each commit, looks up associated PRs via the GitHub API.
+5. Deduplicates the PR list across all commits.
+6. Posts an idempotent comment on each unique PR.
+
 ### Skip conditions
 
-`notify` exits 0 immediately (no-op) when any of the following are true:
-
-- `SEMREL_RELEASED=false` — the release job produced no release
-- `GITHUB_EVENT_NAME` ≠ `pull_request` — not running in a PR context
-- `GITHUB_REF` does not contain a parseable PR number
-- A `<!-- semrel-notify:<version> -->` marker comment already exists on the PR
-  (deduplication guard)
+- `SEMREL_TAG` not set or empty → exits 0 (no-op).
+- Released tag not found in the repository → exits 1 (error).
+- Comment marker `<!-- semrel-notify:<tag> -->` already exists on a PR → skips
+  that PR only (idempotent per-PR guard).
 
 ### Marker format
 
 Comments posted by `notify` contain an HTML marker on the first line:
 
 ```
-<!-- semrel-notify:1.2.3 -->
-🎉 Release 1.2.3 created!
+<!-- semrel-notify:v1.3.0 -->
+🎉 This pull request has been included in release [v1.3.0](https://github.com/owner/repo/releases/tag/v1.3.0).
 ```
 
 The marker is used to detect and skip duplicate posts. It is not visible when the
-comment is rendered.
+comment is rendered. The marker uses the full tag name (e.g. `v1.3.0`).
 
 ### Exit codes
 
 | Code | Meaning |
 | ---- | ------- |
-| `0` | Comment posted, or skipped (already exists / not a PR context / `SEMREL_RELEASED=false`). |
-| `1` | GitHub API error (comment check or post failed). |
+| `0` | Comments posted, or no-op (`SEMREL_TAG` not set). |
+| `1` | Released tag not found in repository, or GitHub API error. |
 
 ### Stdout
 
@@ -294,18 +319,25 @@ from `action.yml` without any local Go toolchain.
 
 ### Permissions
 
-The workflow job that calls `release` or `notify` must have:
+The workflow job that calls `release` must have:
 
 ```yaml
 permissions:
   contents: write   # create annotated tags and GitHub Releases
-  pull-requests: write  # post PR comments (notify subcommand only)
 ```
 
-### Example: full lint + release + notify workflow
+The `notify.yml` workflow job must have:
 
 ```yaml
-# Pin to a specific commit SHA (see Releases for the SHA of each release)
+permissions:
+  contents: read
+  pull-requests: write  # post PR comments
+```
+
+### Example: release workflow
+
+```yaml
+# .github/workflows/release.yml
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -334,22 +366,38 @@ jobs:
         id: semrel
         with:
           subcommand: release
+```
 
+### Example: notify workflow (separate file)
+
+`notify` runs in a dedicated workflow triggered by the `release` event so it has
+access to `github.event.release.tag_name` and `github.event.release.html_url`:
+
+```yaml
+# .github/workflows/notify.yml
+name: Notify PRs
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
   notify:
-    needs: release
-    if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: nrkno/github-action-sematic-release@COMMIT_SHA_HERE
         with:
           subcommand: notify
+          token: ${{ secrets.GITHUB_TOKEN }}
         env:
-          SEMREL_RELEASED: ${{ needs.release.outputs.released }}
-          SEMREL_VERSION:  ${{ needs.release.outputs.version }}
-          SEMREL_TAG:      ${{ needs.release.outputs.tag }}
+          SEMREL_TAG: ${{ github.event.release.tag_name }}
+          SEMREL_VERSION: ${{ github.event.release.name }}
+          SEMREL_RELEASE_URL: ${{ github.event.release.html_url }}
 ```
 
 ---

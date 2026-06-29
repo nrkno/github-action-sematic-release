@@ -307,19 +307,24 @@ func TestE2EReleaseIdempotent(t *testing.T) {
 	assert.NoError(t, err, "release idempotent should succeed")
 }
 
-// TestE2ENotifyNewComment tests notify posting a new comment
+// TestE2ENotifyNewComment tests notify posting a new comment on a PR
 func TestE2ENotifyNewComment(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
-	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
-	t.Setenv("GITHUB_REF", "refs/pull/42/merge")
-	t.Setenv("SEMREL_RELEASED", "true")
-	t.Setenv("SEMREL_VERSION", "v0.1.0")
+	t.Setenv("SEMREL_TAG", "v0.1.0")
+	t.Setenv("SEMREL_RELEASE_URL", "https://github.com/owner/repo/releases/tag/v0.1.0")
 
-	gitClient := &testGitClient{}
+	releasedTag := gitpkg.NewTag("v0.1.0", "abc1234abc1234abc1234abc1234abc1234abc12", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	gitClient := &testGitClient{
+		tagsByName: map[string]*gitpkg.Tag{"v0.1.0": releasedTag},
+		commitsForRange: []gitpkg.Commit{
+			{SHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", ShortSHA: "deadbee", Message: "feat: add feature"},
+		},
+	}
 	githubClient := &testGitHubClient{
 		commentExists: false,
+		prsForCommit:  []githubpkg.PR{{Number: 42, URL: "https://github.com/owner/repo/pull/42", Title: "Test PR"}},
 	}
 
 	root := cli.Root(gitClient, githubClient, logger)
@@ -334,19 +339,24 @@ func TestE2ENotifyNewComment(t *testing.T) {
 	assert.True(t, githubClient.commentPosted, "comment should be posted")
 }
 
-// TestE2ENotifyIdempotent tests notify with existing comment
+// TestE2ENotifyIdempotent tests notify with existing comment — must not double-post
 func TestE2ENotifyIdempotent(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
-	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
-	t.Setenv("GITHUB_REF", "refs/pull/42/merge")
-	t.Setenv("SEMREL_RELEASED", "true")
-	t.Setenv("SEMREL_VERSION", "v0.1.0")
+	t.Setenv("SEMREL_TAG", "v0.1.0")
+	t.Setenv("SEMREL_RELEASE_URL", "https://github.com/owner/repo/releases/tag/v0.1.0")
 
-	gitClient := &testGitClient{}
+	releasedTag := gitpkg.NewTag("v0.1.0", "abc1234abc1234abc1234abc1234abc1234abc12", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	gitClient := &testGitClient{
+		tagsByName: map[string]*gitpkg.Tag{"v0.1.0": releasedTag},
+		commitsForRange: []gitpkg.Commit{
+			{SHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", ShortSHA: "deadbee", Message: "feat: add feature"},
+		},
+	}
 	githubClient := &testGitHubClient{
-		commentExists: true,
+		commentExists: true, // marker already on PR
+		prsForCommit:  []githubpkg.PR{{Number: 42, URL: "https://github.com/owner/repo/pull/42", Title: "Test PR"}},
 	}
 
 	root := cli.Root(gitClient, githubClient, logger)
@@ -467,7 +477,9 @@ func TestE2EFullWorkflow(t *testing.T) {
 
 // testGitClient implements cli.GitClient for testing
 type testGitClient struct {
-	rawRepo *git.Repository
+	rawRepo        *git.Repository
+	tagsByName     map[string]*gitpkg.Tag
+	commitsForRange []gitpkg.Commit
 }
 
 func (c *testGitClient) FindLatestAnnotatedTag(tagPrefix string) (*gitpkg.Tag, error) {
@@ -592,6 +604,22 @@ func (c *testGitClient) PushTag(ctx context.Context, tagName string, auth gitpkg
 }
 
 func (c *testGitClient) FindTagByName(name string) (*gitpkg.Tag, error) {
+	if c.tagsByName != nil {
+		if tag, ok := c.tagsByName[name]; ok {
+			return tag, nil
+		}
+	}
+	return nil, nil
+}
+
+func (c *testGitClient) FindPreviousAnnotatedTag(current *gitpkg.Tag) (*gitpkg.Tag, error) {
+	return nil, nil // bootstrap: no previous tag
+}
+
+func (c *testGitClient) ListCommitsBetweenTags(from, to *gitpkg.Tag) ([]gitpkg.Commit, error) {
+	if c.commitsForRange != nil {
+		return c.commitsForRange, nil
+	}
 	return nil, nil
 }
 

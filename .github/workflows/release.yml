@@ -79,10 +79,12 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
+          TAG_SHA=$(git rev-parse "${TAG}^{commit}")
           sed -i "s|image: docker://.*|image: docker://ghcr.io/${{ github.repository }}:${TAG}@${DIGEST}|" action.yml
+          sed -i "s|uses: nrkno/github-action-sematic-release@.*|uses: nrkno/github-action-sematic-release@${TAG_SHA}|" .github/workflows/notify.yml
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add action.yml
+          git add action.yml .github/workflows/notify.yml
           git commit -m "chore(release): update action image to ${TAG}"
           # Move the annotated tag to the new commit so consumers pin to the
           # commit that actually contains the correct image reference.
@@ -91,20 +93,3 @@ jobs:
       - name: Capture release commit SHA
         id: release_sha
         run: echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-
-  notify:
-    needs: [release, publish-image]
-    if: needs.release.outputs.released == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.25'
-      - run: go build -o semrel ./cmd/semrel
-      - env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SEMREL_RELEASED: ${{ needs.release.outputs.released }}
-          SEMREL_VERSION: ${{ needs.release.outputs.version }}
-          SEMREL_TAG: ${{ needs.release.outputs.tag }}
-        run: ./semrel notify

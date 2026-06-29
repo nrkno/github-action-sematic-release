@@ -3,7 +3,7 @@ type: Playbook
 title: semrel playbook
 description: Step-by-step runbooks for common semrel operations — first release, debugging failures, handling conflicts, bootstrapping, and skipping a release.
 tags: [playbook, runbook, first-release, debugging, bootstrap, troubleshooting]
-timestamp: 2026-06-29
+timestamp: 2026-06-30
 ---
 
 # Playbook
@@ -19,6 +19,12 @@ future releases.
    to `.github/workflows/release.yml`. Ensure `fetch-depth: 0` is set on the checkout step.
 
 2. **Add the CI workflow.** Copy `.github/workflows/ci.yml` to lint commits on every PR.
+
+3. **Add the notify workflow.** Copy `.github/workflows/notify.yml` to
+   `.github/workflows/notify.yml`. This workflow is triggered by
+   `on: release: types: [published]` — a separate workflow, not a job inside
+   `release.yml`. It requires `fetch-depth: 0` and `fetch-tags: true` on the
+   checkout step so that `semrel notify` can find the previous annotated tag.
 
 3. **Make sure all existing commits are conventional.** Run lint locally:
 
@@ -38,13 +44,16 @@ future releases.
    - Show `released=true` in step outputs
    - Create tag `v0.0.1` (bootstrap always starts at `0.0.1`)
    - Create a GitHub Release
-   - Trigger the `publish-image` and `notify` jobs
+
+6. **Verify notify.** The GitHub Release publication triggers `notify.yml`:
+   - Finds all commits between root and `v0.0.1`
+   - Posts `<!-- semrel-notify:v0.0.1 -->` comments on all associated PRs
 
 ---
 
 ## How to run semrel in a new repo
 
-1. Copy both workflow files (`ci.yml`, `release.yml`) from this repository.
+1. Copy all three workflow files (`ci.yml`, `release.yml`, `notify.yml`) from this repository.
 2. The repository needs no special configuration — `GITHUB_TOKEN` is automatic.
 3. Grant the required permissions (see [README — Required permissions](/README.md)):
    - `contents: write`
@@ -103,7 +112,9 @@ level=ERROR msg="repository is shallow"
     fetch-depth: 0
 ```
 
-This applies to every job that runs a semrel subcommand (`release`, `lint`, `notes`).
+This applies to every job that runs a semrel subcommand (`release`, `lint`, `notes`, `notify`).
+The `notify.yml` workflow additionally requires `fetch-tags: true` so that
+`semrel notify` can locate the previous annotated tag.
 
 ---
 
@@ -130,7 +141,8 @@ chore: update golangci-lint to v1.59
 ```
 
 The release workflow still runs, but `released=false` means no tag is created, no
-GitHub Release is published, and the `publish-image` and `notify` jobs are skipped.
+GitHub Release is published, and the `publish-image` job is skipped. Since no
+Release is published, the `notify.yml` workflow is not triggered either.
 
 ---
 

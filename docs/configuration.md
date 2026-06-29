@@ -3,7 +3,7 @@ type: Configuration
 title: semrel configuration reference
 description: All environment variables consumed by semrel, subcommand flags, and GITHUB_OUTPUT fields written on a successful release.
 tags: [configuration, environment-variables, flags, github-output]
-timestamp: 2026-06-29
+timestamp: 2026-06-30
 ---
 
 # Configuration
@@ -61,16 +61,16 @@ directly as documented in the sections below.
 
 ---
 
-### semrel-specific (set by the release job, consumed by notify)
+### semrel-specific (consumed by notify)
 
-These are passed explicitly in the workflow from the `release` job outputs to the
-`notify` job:
+These are set explicitly in the `notify.yml` workflow from the GitHub release event
+payload and passed to `semrel notify`:
 
-| Variable | Set by | Consumed by | Description |
-| -------- | ------ | ----------- | ----------- |
-| `SEMREL_RELEASED` | release job output | `notify` | `"true"` if a release was created, `"false"` for a no-op. |
-| `SEMREL_VERSION` | release job output | `notify` | Version string without `v` prefix (e.g., `1.2.3`). |
-| `SEMREL_TAG` | release job output | `notify` | Full tag name (e.g., `v1.2.3`). |
+| Variable | Scope | Description |
+| -------- | ----- | ----------- |
+| `SEMREL_TAG` | `notify` | Full tag name of the published release (e.g. `v1.3.0`). Required for `semrel notify`. Set from `${{ github.event.release.tag_name }}`. |
+| `SEMREL_RELEASE_URL` | `notify` | HTML URL of the published GitHub Release. Constructed from `GITHUB_SERVER_URL` + `GITHUB_REPOSITORY` + `SEMREL_TAG` if absent. |
+| `SEMREL_VERSION` | `notify` | Version string without `v` prefix (e.g., `1.2.3`). Optional; used for display only. |
 
 ---
 

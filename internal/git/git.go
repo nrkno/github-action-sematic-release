@@ -250,6 +250,7 @@ func (r *Repository) ListCommitsSinceTag(tag *Tag) ([]Commit, error) {
 }
 
 // ListCommitsBetweenTags lists commits between two tags (exclusive of from, inclusive of to).
+// If from is nil, returns all commits from to back to the repository root (bootstrap case).
 // Returns commits in reverse-chronological order.
 func (r *Repository) ListCommitsBetweenTags(from, to *Tag) ([]Commit, error) {
 	toHash := plumbing.NewHash(to.TargetSHA())
@@ -261,11 +262,14 @@ func (r *Repository) ListCommitsBetweenTags(from, to *Tag) ([]Commit, error) {
 	defer iter.Close()
 
 	var commits []Commit
-	fromHash := plumbing.NewHash(from.TargetSHA())
+	var fromHash plumbing.Hash
+	if from != nil {
+		fromHash = plumbing.NewHash(from.TargetSHA())
+	}
 
 	err = iter.ForEach(func(c *object.Commit) error {
-		// Stop when we reach the from commit (exclusive)
-		if c.Hash == fromHash {
+		// Stop when we reach the from commit (exclusive); skip if from is nil (walk all)
+		if from != nil && c.Hash == fromHash {
 			return storer.ErrStop
 		}
 
