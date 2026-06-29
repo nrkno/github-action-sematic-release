@@ -10,6 +10,13 @@ timestamp: 2026-06-29
 
 ### 2026-06-29
 
+- **Update** `docs/architecture.md` — added Security Model section covering two-layer pinning (git SHA + container digest), what each layer protects against, what is out of scope, and cosign verification recommendation
+- **Update** `docs/playbook.md` — added "How to pin securely" runbook: find commit SHA on releases page, use full SHA as workflow ref, optional cosign verification
+- **Update** `README.md` — added Security section (before Quick Start) with SHA-pinning warning, secure vs less-secure usage examples, and explanation of dual-layer supply-chain protection
+- **Update** `.github/workflows/release.yml` — emit `release_sha` job output from `publish-image` (captures `git rev-parse HEAD` after retag); update release job summary step to print commit SHA alongside release notes
+
+### 2026-06-29
+
 - **Creation** `action.yml` — GitHub Action manifest: 4 inputs (subcommand, token, dry-run, working-directory), 9 outputs (released, version, tag, major_version, minor_version, patch_version, bump, notes, sha), docker image reference with tag+digest placeholder
 - **Creation** `entrypoint.sh` — shell entry point that maps `INPUT_*` environment variables to semrel CLI arguments and exports `GITHUB_TOKEN`; copied into the Docker image and used as `ENTRYPOINT`
 - **Update** `docs/configuration.md` — added `INPUT_*` subsection documenting the four GitHub Action input variables (`INPUT_SUBCOMMAND`, `INPUT_TOKEN`, `INPUT_DRY_RUN`, `INPUT_WORKING_DIRECTORY`) and their mapping to CLI arguments

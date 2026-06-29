@@ -1,5 +1,5 @@
 bin/
-semrel
+/semrel
 *.test
 coverage.out
 .env

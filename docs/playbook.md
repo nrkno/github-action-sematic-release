@@ -214,3 +214,56 @@ cosign verify ghcr.io/nrkno/github-action-sematic-release:v1.2.3 \
 ```
 
 A successful verification prints the signing certificate and bundle to stdout.
+
+---
+
+## How to pin securely
+
+**Situation:** You want to use this action in a workflow with an immutable reference
+so your pipeline cannot be silently altered by a tag being force-pushed.
+
+**Why this matters:** Git tags are mutable. Anyone with push access to this
+repository can run `git push --force origin v1.2.3` to point the tag at a different
+commit. Pinning by commit SHA is immune to this — the SHA is a cryptographic hash
+of the commit content and cannot be redirected.
+
+**Steps:**
+
+1. **Find the release on the releases page.**
+   Go to [github.com/nrkno/github-action-sematic-release/releases](https://github.com/nrkno/github-action-sematic-release/releases)
+   and open the release you want to use.
+
+2. **Copy the commit SHA.**
+   Each release workflow prints the commit SHA in the workflow summary
+   (visible by clicking the release workflow run linked from the release page).
+   The SHA is also the "full SHA" shown next to the tag on the releases page.
+
+3. **Use the SHA as the ref in your workflow:**
+
+   ```yaml
+   # Pin to a specific commit SHA (see Releases for the SHA of each release)
+   - uses: nrkno/github-action-sematic-release@<COMMIT_SHA>
+     with:
+       subcommand: release
+       token: ${{ secrets.GITHUB_TOKEN }}
+   ```
+
+   Replace `<COMMIT_SHA>` with the full 40-character SHA, e.g.:
+
+   ```yaml
+   - uses: nrkno/github-action-sematic-release@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+   ```
+
+4. **(Optional) Verify the cosign signature** to confirm the image at that SHA
+   was built by NRK's CI pipeline:
+
+   ```bash
+   cosign verify ghcr.io/nrkno/github-action-sematic-release:vX.Y.Z \
+     --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release/.*" \
+     --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+   ```
+
+**Result:** Your workflow references an immutable git object (commit SHA) whose
+`action.yml` contains an immutable container reference (image digest). Together,
+these two layers give full supply-chain protection at both the git and registry
+layers.

@@ -231,7 +231,8 @@ from `action.yml` without any local Go toolchain.
 ### Minimal workflow
 
 ```yaml
-- uses: nrkno/github-action-sematic-release@v1
+# Pin to a specific commit SHA (see Releases for the SHA of each release)
+- uses: nrkno/github-action-sematic-release@COMMIT_SHA_HERE
   id: semrel
   with:
     subcommand: release
@@ -274,6 +275,7 @@ permissions:
 ### Example: full lint + release + notify workflow
 
 ```yaml
+# Pin to a specific commit SHA (see Releases for the SHA of each release)
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -281,7 +283,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: nrkno/github-action-sematic-release@v1
+      - uses: nrkno/github-action-sematic-release@COMMIT_SHA_HERE
         with:
           subcommand: lint
 
@@ -298,7 +300,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: nrkno/github-action-sematic-release@v1
+      - uses: nrkno/github-action-sematic-release@COMMIT_SHA_HERE
         id: semrel
         with:
           subcommand: release
@@ -311,7 +313,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - uses: nrkno/github-action-sematic-release@v1
+      - uses: nrkno/github-action-sematic-release@COMMIT_SHA_HERE
         with:
           subcommand: notify
         env:

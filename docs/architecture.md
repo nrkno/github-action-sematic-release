@@ -143,3 +143,69 @@ push to main
 The release job builds semrel from source on every push to `main`. This means the
 self-release pipeline never depends on a previously published container — avoiding
 the bootstrap problem that affected the upstream action.
+
+---
+
+## Security Model
+
+### Why this project exists
+
+The `codfish/semantic-release` GitHub Action was identified as a supply-chain risk
+after the upstream maintainer's account was compromised and a malicious version was
+briefly published. semrel replaces it with a first-party binary built from source in
+CI, eliminating the dependency on a third-party action.
+
+### Two-layer pinning
+
+Consumers of this action are protected by two independent, complementary layers:
+
+| Layer | Mechanism | What it protects against |
+| ----- | --------- | ------------------------ |
+| **Git layer** | `uses: …@<commit-SHA>` | Attacker force-pushes a tag to a malicious commit |
+| **Container layer** | `image: docker://…:<tag>@sha256:…` inside `action.yml` | Attacker overwrites the GHCR tag to point to a malicious image |
+
+#### Git layer — commit SHA pinning
+
+Git tags are mutable: anyone with push access to this repository can force-push a
+tag to a different commit. A pinned tag (`@v1.2.3`) is not a security guarantee.
+
+Pinning by **commit SHA** (`@abc1234…`) is immutable — the SHA is a cryptographic
+hash of the commit content. GitHub will refuse to serve a different commit for a
+given SHA.
+
+#### Container layer — image digest pinning
+
+The `action.yml` image reference includes a `sha256:` digest alongside the tag:
+
+```yaml
+image: docker://ghcr.io/nrkno/github-action-sematic-release:v1.2.3@sha256:<digest>
+```
+
+This means even if someone overwrites the `v1.2.3` tag in the container registry,
+Actions will still pull the exact content identified by the digest. The cosign
+signature binds the digest to the NRK GitHub Actions OIDC identity, allowing
+independent verification.
+
+### What these layers do NOT protect against
+
+- **Compromised build pipeline**: if the CI workflow itself is tampered with during
+  a release run, both the binary and the image could be replaced before signing.
+- **Compromised Go dependencies**: a malicious dependency could be introduced via a
+  supply-chain attack on a dependency of semrel. Dependabot and `govulncheck` reduce
+  but do not eliminate this risk.
+- **Compromised GitHub Actions runners**: a compromised runner environment is outside
+  the scope of any pinning strategy.
+
+### Recommendation
+
+Pin by **commit SHA** at the git layer. Optionally verify the cosign signature on
+the container image to confirm it was built by NRK's CI:
+
+```bash
+cosign verify ghcr.io/nrkno/github-action-sematic-release:v1.2.3 \
+  --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release/.*" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+```
+
+Each release prints its commit SHA in the workflow summary and on the
+[releases page](https://github.com/nrkno/github-action-sematic-release/releases).

@@ -32,13 +32,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./semrel release
-      - run: ./semrel notes >> $GITHUB_STEP_SUMMARY
+      - run: |
+          echo "### Release ${{ steps.semrel.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "Commit SHA (use this to pin the action): \`$(git rev-parse HEAD)\`" >> $GITHUB_STEP_SUMMARY
+          ./semrel notes >> $GITHUB_STEP_SUMMARY
         if: steps.semrel.outputs.released == 'true'
 
   publish-image:
     needs: release
     if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.release_sha.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v2
@@ -78,6 +83,9 @@ jobs:
           git tag -f "${TAG}"
           git push origin "${TAG}" --force
           git push origin main
+      - name: Capture release commit SHA
+        id: release_sha
+        run: echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
   notify:
     needs: [release, publish-image]

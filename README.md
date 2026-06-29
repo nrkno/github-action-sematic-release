@@ -14,6 +14,38 @@ The container image is published to GHCR and signed with
 
 ---
 
+## Security
+
+> ⚠️ **Always pin by commit SHA, not tag.**
+
+Git tags are mutable. An attacker with push access to this repository could
+force-push a tag to a malicious commit. Pinning by commit SHA gives you an
+immutable reference that cannot be silently changed.
+
+```yaml
+# ✅ Secure — commit SHA is immutable
+- uses: nrkno/github-action-sematic-release@<COMMIT_SHA>
+  with:
+    subcommand: release
+    token: ${{ secrets.GITHUB_TOKEN }}
+
+# ⚠️ Less secure — git tags can be force-pushed
+- uses: nrkno/github-action-sematic-release@v1.2.3
+  with:
+    subcommand: release
+    token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+The action image is also pinned by digest (`sha256:…`) inside `action.yml`,
+which protects against the container registry tag being overwritten. Together,
+SHA pinning (git layer) + digest pinning (container layer) gives full
+supply-chain protection.
+
+Each release prints its commit SHA in the workflow summary. You can also find
+it on the [releases page](https://github.com/nrkno/github-action-sematic-release/releases).
+
+---
+
 ## Quick start
 
 The minimal release workflow — drop this in `.github/workflows/release.yml`:
