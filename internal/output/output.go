@@ -9,6 +9,7 @@ import (
 
 // WriteFields writes key=value pairs to outputFile (append mode) or stdout if outputFile is empty.
 // Keys are sorted for deterministic output.
+// Multiline values are written in the heredoc format required by GitHub Actions GITHUB_OUTPUT.
 // Returns error if file write fails.
 func WriteFields(outputFile string, fields map[string]string) error {
 	// Sort keys for deterministic output
@@ -18,14 +19,16 @@ func WriteFields(outputFile string, fields map[string]string) error {
 	}
 	sort.Strings(keys)
 
-	// Build output lines
-	var lines []string
+	const delimiter = "_GitHubActionsFileCommandDelimeter_"
+	var sb strings.Builder
 	for _, k := range keys {
-		lines = append(lines, fmt.Sprintf("%s=%s", k, fields[k]))
-	}
-	output := strings.Join(lines, "\n")
-	if len(output) > 0 {
-		output += "\n"
+		v := fields[k]
+		if strings.Contains(v, "\n") {
+			// Multiline: use heredoc format required by GitHub Actions
+			fmt.Fprintf(&sb, "%s<<%s\n%s\n%s\n", k, delimiter, v, delimiter)
+		} else {
+			fmt.Fprintf(&sb, "%s=%s\n", k, v)
+		}
 	}
 
 	// Write to file or stdout
@@ -36,12 +39,12 @@ func WriteFields(outputFile string, fields map[string]string) error {
 			return fmt.Errorf("open output file: %w", err)
 		}
 		defer f.Close()
-		if _, err := f.WriteString(output); err != nil {
+		if _, err := f.WriteString(sb.String()); err != nil {
 			return fmt.Errorf("write output file: %w", err)
 		}
 	} else {
 		// Write to stdout
-		fmt.Print(output)
+		fmt.Print(sb.String())
 	}
 
 	return nil

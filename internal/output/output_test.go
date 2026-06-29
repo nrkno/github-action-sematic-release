@@ -381,3 +381,80 @@ func TestWriteFields_NewlineHandling(t *testing.T) {
 		t.Errorf("Line 2 should be empty (trailing newline), got %q", lines[2])
 	}
 }
+
+const heredocDelimiter = "_GitHubActionsFileCommandDelimeter_"
+
+func TestWriteFields_MultilineValue_UsesHeredoc(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "output.txt")
+
+	fields := map[string]string{
+		"notes": "- feat: add foo\n- fix: bar baz",
+	}
+
+	if err := WriteFields(outputFile, fields); err != nil {
+		t.Fatalf("WriteFields failed: %v", err)
+	}
+
+	content, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	expected := fmt.Sprintf("notes<<%s\n- feat: add foo\n- fix: bar baz\n%s\n", heredocDelimiter, heredocDelimiter)
+	if string(content) != expected {
+		t.Errorf("Multiline heredoc mismatch:\ngot:  %q\nwant: %q", string(content), expected)
+	}
+}
+
+func TestWriteFields_SingleLineValue_UsesKeyEquals(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "output.txt")
+
+	fields := map[string]string{
+		"version": "1.2.3",
+	}
+
+	if err := WriteFields(outputFile, fields); err != nil {
+		t.Fatalf("WriteFields failed: %v", err)
+	}
+
+	content, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	expected := "version=1.2.3\n"
+	if string(content) != expected {
+		t.Errorf("Single-line format mismatch:\ngot:  %q\nwant: %q", string(content), expected)
+	}
+}
+
+func TestWriteFields_MixedSingleAndMultiline(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "output.txt")
+
+	fields := map[string]string{
+		"notes":    "- feat: foo\n- fix: bar",
+		"released": "true",
+		"version":  "2.0.0",
+	}
+
+	if err := WriteFields(outputFile, fields); err != nil {
+		t.Fatalf("WriteFields failed: %v", err)
+	}
+
+	content, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	// Keys are sorted: notes, released, version
+	expected := fmt.Sprintf(
+		"notes<<%s\n- feat: foo\n- fix: bar\n%s\nreleased=true\nversion=2.0.0\n",
+		heredocDelimiter, heredocDelimiter,
+	)
+	if string(content) != expected {
+		t.Errorf("Mixed format mismatch:\ngot:  %q\nwant: %q", string(content), expected)
+	}
+}

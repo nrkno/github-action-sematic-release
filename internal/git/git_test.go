@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-git/go-billy/v5/memfs"
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
 )
@@ -261,15 +262,17 @@ func TestFindLatestAnnotatedTag_IgnoresLightweightTags(t *testing.T) {
 	// Create annotated tag
 	annotatedTagObj := createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
-	// Create lightweight tag (direct ref to commit, not tag object)
+	// Lightweight tag = a ref pointing directly at a commit hash, no tag object.
+	// Do NOT use repo.CreateTag() — that path requires Tagger and creates an annotated tag.
 	head, err := repo.Head()
 	if err != nil {
 		t.Fatalf("failed to get HEAD: %v", err)
 	}
-	_, err = repo.CreateTag("lightweight", head.Hash(), &gogit.CreateTagOptions{
-		Message: "lightweight", // Required even for lightweight tags in go-git
-	})
-	if err != nil {
+	lwRef := plumbing.NewHashReference(
+		plumbing.NewTagReferenceName("v0.0.1-lightweight"),
+		head.Hash(),
+	)
+	if err := repo.Storer.SetReference(lwRef); err != nil {
 		t.Fatalf("failed to create lightweight tag: %v", err)
 	}
 
