@@ -79,12 +79,10 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          TAG_SHA=$(git rev-parse "${TAG}^{commit}")
           sed -i "s|image: docker://.*|image: docker://ghcr.io/${{ github.repository }}:${TAG}@${DIGEST}|" action.yml
-          sed -i "s|uses: nrkno/github-action-sematic-release@.*|uses: nrkno/github-action-sematic-release@${TAG_SHA}|" .github/workflows/notify.yml
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add action.yml .github/workflows/notify.yml
+          git add action.yml
           git commit -m "chore(release): update action image to ${TAG}"
           # Move the annotated tag to the new commit so consumers pin to the
           # commit that actually contains the correct image reference.
