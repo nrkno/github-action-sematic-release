@@ -10,6 +10,11 @@ timestamp: 2026-06-29
 
 ### 2026-06-29
 
+- **Update** `README.md` — added Configuration (.semrelrc.yml) section with all 5 new fields
+- **Update** `docs/playbook.md` — added 5 runbooks for new config options
+
+### 2026-06-29
+
 - **Update** `docs/configuration.md` — added 5 new .semrelrc.yml fields: bump-rules, release-branches, tag-prefix, commit-types, initial-version
 - **Update** `docs/api-reference.md` — noted new config fields in lint and release sections
 - **Update** `docs/api-reference.md` — added "Log output" subsection to `semrel release` documenting the 8 structured slog.Info lines emitted during a release (commits in release, bump detected, PRs in release, release triggered by, created annotated tag, pushed tag, created GitHub release, bootstrap case)

@@ -189,6 +189,39 @@ jobs:
 
 ---
 
+## Configuration (`.semrelrc.yml`)
+
+Place a `.semrelrc.yml` at your repo root to customise semrel behaviour.
+All fields are optional — absent fields retain the defaults shown.
+
+```yaml
+# .semrelrc.yml
+lint:
+  rules:
+    capital-first-letter: true  # fail UPPER descriptions
+    require-scope: false
+
+bump-rules:                     # which type triggers which bump
+  breaking-change: major        # default — customise freely
+  feat: minor
+  fix: patch
+  # chore: patch               # example: add patch bump for chore
+
+release-branches: [main, master]  # branches that trigger a release
+
+tag-prefix: "v"               # tag format: "v1.2.3" (set "" for bare)
+
+commit-types:
+  extra-types: []             # add custom types to the built-in 10
+  allowed-types: []           # replace built-in set entirely (non-empty)
+
+initial-version: "0.0.0"     # bootstrap base version (bump applied on top)
+```
+
+See [docs/configuration.md](/docs/configuration.md) for the full field reference.
+
+---
+
 ## Documentation
 
 Full documentation is in [`docs/`](/docs/index.md):

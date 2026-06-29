@@ -203,6 +203,91 @@ commit abc1234: missing type
 
 ---
 
+## How to restrict releases to a single branch
+
+By default, `semrel release` runs on both `main` and `master`.
+To restrict it to `main` only:
+
+```yaml
+# .semrelrc.yml
+release-branches: [main]
+```
+
+Glob patterns are supported (`releases/*` matches `releases/v2`).
+Note: `*` does not cross `/` — `releases/*` will NOT match `releases/team/v2`.
+
+---
+
+## How to bootstrap at a non-zero version
+
+When no annotated tags exist, semrel starts at `0.0.0` and applies the
+detected bump. To start at a different baseline:
+
+```yaml
+# .semrelrc.yml
+initial-version: "1.0.0"
+```
+
+With this config, the first `fix:` commit produces `v1.0.1`, and the first
+`feat:` commit produces `v1.1.0`.
+
+---
+
+## How to add or restrict valid commit types
+
+To add custom types on top of the built-in 10:
+
+```yaml
+# .semrelrc.yml
+commit-types:
+  extra-types: [deps, security]
+```
+
+To restrict lint to an exact subset:
+
+```yaml
+commit-types:
+  allowed-types: [feat, fix, docs]
+```
+
+---
+
+## How to customise which commit types trigger a version bump
+
+Override any type's bump level, or add bump rules for types that default to none:
+
+```yaml
+# .semrelrc.yml
+bump-rules:
+  chore: patch    # add patch bump for chore
+  fix: none       # suppress fix bumps
+```
+
+To freeze all bumps (no releases on any commit type):
+
+```yaml
+bump-rules:
+  breaking-change: none
+  feat: none
+  fix: none
+```
+
+---
+
+## How to use bare version tags
+
+Set `tag-prefix: ""` to produce tags like `1.2.3` instead of `v1.2.3`.
+
+```yaml
+# .semrelrc.yml
+tag-prefix: ""
+```
+
+> ⚠️ Only set this on new repositories. Changing the prefix on a repo with
+> existing `v`-prefixed tags will cause semrel to stop finding them.
+
+---
+
 ## How to verify cosign signature
 
 After a release, verify the container image signature:
