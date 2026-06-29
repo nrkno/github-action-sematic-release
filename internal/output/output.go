@@ -11,7 +11,7 @@ import (
 // Keys are sorted for deterministic output.
 // Multiline values are written in the heredoc format required by GitHub Actions GITHUB_OUTPUT.
 // Returns error if file write fails.
-func WriteFields(outputFile string, fields map[string]string) error {
+func WriteFields(outputFile string, fields map[string]string) (err error) {
 	// Sort keys for deterministic output
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
@@ -34,12 +34,18 @@ func WriteFields(outputFile string, fields map[string]string) error {
 	// Write to file or stdout
 	if outputFile != "" {
 		// Append to file
-		f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		var f *os.File
+		f, err = os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("open output file: %w", err)
 		}
-		defer f.Close()
-		if _, err := f.WriteString(sb.String()); err != nil {
+		defer func() {
+			if cerr := f.Close(); cerr != nil && err == nil {
+				err = fmt.Errorf("close output file: %w", cerr)
+			}
+		}()
+		_, err = f.WriteString(sb.String())
+		if err != nil {
 			return fmt.Errorf("write output file: %w", err)
 		}
 	} else {

@@ -63,7 +63,8 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 			ghEnv := env.Load()
 
 			// Determine lint range based on context
-			if ghEnv.EventName == "pull_request" {
+			switch ghEnv.EventName {
+			case "pull_request":
 				// PR context: base → HEAD
 				if fromRef == "" {
 					fromRef = ghEnv.BaseRef
@@ -71,7 +72,7 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 				if toRef == "" {
 					toRef = "HEAD"
 				}
-			} else if ghEnv.EventName == "push" || ghEnv.EventName == "release" {
+			case "push", "release":
 				// Push/release context: previous tag → HEAD
 				if fromRef == "" {
 					tag, err := gitClient.FindLatestAnnotatedTag()
@@ -86,7 +87,7 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 				if toRef == "" {
 					toRef = "HEAD"
 				}
-			} else {
+			default:
 				// Bootstrap: all commits
 				if fromRef == "" {
 					fromRef = ""
@@ -107,7 +108,8 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 				// Range: from tag to HEAD
 				// For now, we'll use ListCommitsSinceTag and filter
 				// This is a simplification; a full implementation would support arbitrary ranges
-				tag, err := gitClient.FindLatestAnnotatedTag()
+				var tag *git.Tag
+				tag, err = gitClient.FindLatestAnnotatedTag()
 				if err != nil {
 					logger.Error("failed to find tag", "error", err)
 					return err
@@ -448,7 +450,9 @@ func cmdNotes(gitClient GitClient, githubClient GitHubClient, logger *slog.Logge
 			releaseNotes := notes.Generate(parsedCommits, prMap)
 
 			// Output
-			fmt.Fprint(cmd.OutOrStdout(), releaseNotes.Body)
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), releaseNotes.Body); err != nil {
+				logger.Warn("failed to write notes", "error", err)
+			}
 
 			// Also write to GITHUB_OUTPUT if set
 			if ghEnv.Output != "" {

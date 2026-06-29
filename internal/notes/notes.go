@@ -58,7 +58,7 @@ func Generate(commits []conventional.Commit, prMap map[string]PR) ReleaseNotes {
 		line := formatCommitLine(commit, pr)
 
 		// Determine section
-		key := sectionBreaking
+		var key sectionKey
 		if commit.Breaking {
 			key = sectionBreaking
 		} else if commit.Type == conventional.TypeFeat {
@@ -137,9 +137,7 @@ func buildMarkdownBody(sections []Section) string {
 	var parts []string
 	for _, section := range sections {
 		parts = append(parts, fmt.Sprintf("## %s", section.Title))
-		for _, commit := range section.Commits {
-			parts = append(parts, commit)
-		}
+		parts = append(parts, section.Commits...)
 		parts = append(parts, "") // blank line between sections
 	}
 

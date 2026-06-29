@@ -369,7 +369,7 @@ func TestRootCommand(t *testing.T) {
 	cmd := Root(gitClient, githubClient, logger)
 
 	if cmd == nil {
-		t.Error("Root should return a command")
+		t.Fatal("Root should return a command")
 	}
 
 	if cmd.Use != "semrel" {
