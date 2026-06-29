@@ -46,8 +46,6 @@ jobs:
     needs: release
     if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
-    outputs:
-      release_sha: ${{ steps.release_sha.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v2
@@ -74,20 +72,3 @@ jobs:
       - run: cosign sign --yes ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
         env:
           COSIGN_EXPERIMENTAL: 1
-      - name: Update action.yml image reference and retag
-        env:
-          TAG: ${{ needs.release.outputs.tag }}
-          DIGEST: ${{ steps.push.outputs.digest }}
-        run: |
-          sed -i "s|image: docker://.*|image: docker://ghcr.io/${{ github.repository }}:${TAG}|" action.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add action.yml
-          git commit -m "chore(release): update action image to ${TAG}"
-          # Move the annotated tag to the new commit so consumers pin to the
-          # commit that actually contains the correct image reference.
-          git tag -f -a "${TAG}" -m "Release ${TAG}"
-          git push origin "${TAG}" --force
-      - name: Capture release commit SHA
-        id: release_sha
-        run: echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
