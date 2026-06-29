@@ -381,12 +381,13 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				// Tag already at HEAD — just create the GitHub release (idempotent retry)
 				if !dryRun {
 					releaseNotes := generateReleaseNotes(parsedCommits, notesPRMap)
-					release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
-						TagName: versionTag,
-						Body:    releaseNotes,
-					})
-					if err != nil {
-						logger.Error("failed to create release for existing tag", "error", err)
+				release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
+					TagName: versionTag,
+					Name:    versionTag,
+					Body:    releaseNotes,
+				})
+				if err != nil {
+					logger.Error("failed to create release for existing tag", "error", err)
 						return err
 					}
 					// Log 7: GitHub release created
@@ -433,11 +434,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				// Log 6: tag pushed
 				logger.Info("pushed tag to origin", "tag", versionTag)
 
-				// 3. Create release — tag now exists on remote as annotated
-				release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
-					TagName: versionTag,
-					Body:    releaseNotes,
-				})
+			// 3. Create release — tag now exists on remote as annotated
+			release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
+				TagName: versionTag,
+				Name:    versionTag,
+				Body:    releaseNotes,
+			})
 				if err != nil {
 					logger.Error("failed to create release", "error", err)
 					return err

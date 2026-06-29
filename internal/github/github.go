@@ -46,6 +46,7 @@ type Release struct {
 // CreateReleaseOptions for CreateRelease.
 type CreateReleaseOptions struct {
 	TagName string
+	Name    string
 	Body    string
 }
 
@@ -94,6 +95,7 @@ func (c *Client) GetReleaseByTag(ctx context.Context, owner, repo, tag string) (
 func (c *Client) CreateRelease(ctx context.Context, owner, repo string, opts CreateReleaseOptions) (*Release, error) {
 	input := &gogithub.RepositoryRelease{
 		TagName: gogithub.String(opts.TagName),
+		Name:    gogithub.String(opts.Name),
 		Body:    gogithub.String(opts.Body),
 	}
 
