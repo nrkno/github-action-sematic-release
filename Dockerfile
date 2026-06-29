@@ -23,9 +23,15 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o semrel \
     ./cmd/semrel
 
-# Final stage: distroless
-FROM gcr.io/distroless/static-debian12:nonroot
+# Final stage: alpine (distroless/static has no shell; entrypoint.sh needs sh).
+# nonroot user is created to avoid running as root.
+FROM alpine:3.19
+
+RUN addgroup -S nonroot && adduser -S nonroot -G nonroot
 
 COPY --from=builder /app/semrel /semrel
+COPY entrypoint.sh /entrypoint.sh
 
-ENTRYPOINT ["/semrel"]
+USER nonroot
+
+ENTRYPOINT ["/entrypoint.sh"]

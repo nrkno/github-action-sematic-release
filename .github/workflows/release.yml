@@ -47,7 +47,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v4
+      - id: push
+        uses: docker/build-push-action@v4
         with:
           context: .
           push: true
@@ -57,9 +58,26 @@ jobs:
             COMMIT=${{ github.sha }}
             DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
       - uses: sigstore/cosign-installer@v3
-      - run: cosign sign --yes ghcr.io/${{ github.repository }}:${{ needs.release.outputs.tag }}
+      # Sign by digest so the signature is bound to immutable content, not a
+      # mutable tag.
+      - run: cosign sign --yes ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
         env:
           COSIGN_EXPERIMENTAL: 1
+      - name: Update action.yml image reference and retag
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          sed -i "s|image: docker://.*|image: docker://ghcr.io/${{ github.repository }}:${TAG}@${DIGEST}|" action.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add action.yml
+          git commit -m "chore(release): update action image to ${TAG}"
+          # Move the annotated tag to the new commit so consumers pin to the
+          # commit that actually contains the correct image reference.
+          git tag -f "${TAG}"
+          git push origin "${TAG}" --force
+          git push origin main
 
   notify:
     needs: [release, publish-image]

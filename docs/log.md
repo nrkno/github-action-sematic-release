@@ -10,6 +10,13 @@ timestamp: 2026-06-29
 
 ### 2026-06-29
 
+- **Creation** `action.yml` — GitHub Action manifest: 4 inputs (subcommand, token, dry-run, working-directory), 9 outputs (released, version, tag, major_version, minor_version, patch_version, bump, notes, sha), docker image reference with tag+digest placeholder
+- **Creation** `entrypoint.sh` — shell entry point that maps `INPUT_*` environment variables to semrel CLI arguments and exports `GITHUB_TOKEN`; copied into the Docker image and used as `ENTRYPOINT`
+- **Update** `docs/configuration.md` — added `INPUT_*` subsection documenting the four GitHub Action input variables (`INPUT_SUBCOMMAND`, `INPUT_TOKEN`, `INPUT_DRY_RUN`, `INPUT_WORKING_DIRECTORY`) and their mapping to CLI arguments
+- **Update** `docs/api-reference.md` — added "Using as a GitHub Action" section with inputs table, outputs table, required permissions, and a complete lint+release+notify workflow example
+
+### 2026-06-29
+
 - **Creation** `docs/architecture.md` — initial architecture documentation covering supply-chain context, package structure, go-git rationale, distroless container, idempotency ladder, SHA comparison, and shallow clone requirement
 - **Creation** `docs/configuration.md` — complete reference for all environment variables consumed by semrel, subcommand flags (lint --from-ref/--to-ref, release --dry-run), and GITHUB_OUTPUT fields (released, version, tag, major, minor, patch)
 - **Creation** `docs/api-reference.md` — subcommand synopsis, flags, exit codes, stdout/stderr behaviour, and GITHUB_OUTPUT fields for all four subcommands (lint, release, notify, notes)

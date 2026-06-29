@@ -223,6 +223,105 @@ Commits are grouped by type. PR links are resolved via the GitHub API
 
 ---
 
+## Using as a GitHub Action
+
+semrel ships as a prebuilt Docker image on GHCR and can be consumed directly
+from `action.yml` without any local Go toolchain.
+
+### Minimal workflow
+
+```yaml
+- uses: nrkno/github-action-sematic-release@v1
+  id: semrel
+  with:
+    subcommand: release
+  # token defaults to ${{ github.token }} — no explicit input needed
+```
+
+### Inputs
+
+| Input | Required | Default | Description |
+| ----- | -------- | ------- | ----------- |
+| `subcommand` | **yes** | — | Subcommand to run: `lint`, `release`, `notify`, or `notes`. |
+| `token` | no | `${{ github.token }}` | GitHub token for API calls and git push. |
+| `dry-run` | no | `"false"` | Set to `"true"` to skip tag creation, push, and release creation. |
+| `working-directory` | no | `.` | Path to the git repository root inside the runner workspace. |
+
+### Outputs
+
+| Output | Example | Description |
+| ------ | ------- | ----------- |
+| `released` | `true` / `false` | Whether a new release was created. |
+| `version` | `1.2.3` | Version string without the `v` prefix. |
+| `tag` | `v1.2.3` | Git tag name. |
+| `major_version` | `1` | Major component. |
+| `minor_version` | `2` | Minor component. |
+| `patch_version` | `3` | Patch component. |
+| `bump` | `minor` | Bump type: `major`, `minor`, `patch`, or `none`. |
+| `notes` | *(markdown)* | Rendered release notes (set by the `notes` subcommand). |
+| `sha` | `abc1234…` | HEAD commit SHA at the time of the release. |
+
+### Permissions
+
+The workflow job that calls `release` or `notify` must have:
+
+```yaml
+permissions:
+  contents: write   # create annotated tags and GitHub Releases
+  pull-requests: write  # post PR comments (notify subcommand only)
+```
+
+### Example: full lint + release + notify workflow
+
+```yaml
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: nrkno/github-action-sematic-release@v1
+        with:
+          subcommand: lint
+
+  release:
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      released: ${{ steps.semrel.outputs.released }}
+      version:  ${{ steps.semrel.outputs.version }}
+      tag:      ${{ steps.semrel.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: nrkno/github-action-sematic-release@v1
+        id: semrel
+        with:
+          subcommand: release
+
+  notify:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nrkno/github-action-sematic-release@v1
+        with:
+          subcommand: notify
+        env:
+          SEMREL_RELEASED: ${{ needs.release.outputs.released }}
+          SEMREL_VERSION:  ${{ needs.release.outputs.version }}
+          SEMREL_TAG:      ${{ needs.release.outputs.tag }}
+```
+
+---
+
 ## Global flags
 
 | Flag | Description |

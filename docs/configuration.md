@@ -39,6 +39,26 @@ required for standard workflows.
 | `GITHUB_RUN_ID` | Unique ID of the current workflow run (informational). |
 | `GITHUB_ACTOR` | GitHub username of the person or app that triggered the run (informational). |
 
+### GitHub Action inputs (`INPUT_*`)
+
+When semrel runs as a GitHub Action the runner automatically maps every
+`inputs:` entry declared in `action.yml` to an `INPUT_<NAME>` environment
+variable (uppercased, hyphens replaced by underscores). `entrypoint.sh`
+reads these and translates them to CLI arguments.
+
+| Variable | Maps to | Description |
+| -------- | ------- | ----------- |
+| `INPUT_SUBCOMMAND` | first positional argument | Subcommand to execute: `lint`, `release`, `notify`, or `notes`. Required. |
+| `INPUT_TOKEN` | `GITHUB_TOKEN` env var | GitHub token. Overrides the value injected by the runner. Defaults to `github.token`. |
+| `INPUT_DRY_RUN` | `--dry-run` flag | Set to `"true"` to skip tag creation, push, and GitHub Release creation. |
+| `INPUT_WORKING_DIRECTORY` | `cd` target | Path to the repository root before running the binary. Defaults to `.` (workspace root). |
+
+These variables are only relevant when semrel is used via `action.yml`. Direct
+CLI invocations do not use `INPUT_*`; they accept flags and environment variables
+directly as documented in the sections below.
+
+---
+
 ### semrel-specific (set by the release job, consumed by notify)
 
 These are passed explicitly in the workflow from the `release` job outputs to the
