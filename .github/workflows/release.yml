@@ -79,7 +79,7 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          sed -i "s|image: docker://.*|image: docker://ghcr.io/${{ github.repository }}:${TAG}@${DIGEST}|" action.yml
+          sed -i "s|image: docker://.*|image: docker://ghcr.io/${{ github.repository }}:${TAG}|" action.yml
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add action.yml

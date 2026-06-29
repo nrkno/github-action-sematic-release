@@ -36,10 +36,17 @@ immutable reference that cannot be silently changed.
     token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-The action image is also pinned by digest (`sha256:…`) inside `action.yml`,
-which protects against the container registry tag being overwritten. Together,
-SHA pinning (git layer) + digest pinning (container layer) gives full
-supply-chain protection.
+The action image is tagged by release version in `action.yml`. Supply-chain
+integrity is provided by cosign keyless signatures — verify with:
+
+```bash
+cosign verify ghcr.io/nrkno/github-action-sematic-release:vX.Y.Z \
+  --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+```
+
+Always pin consuming workflows to a specific release tag or commit SHA
+rather than `@main`.
 
 Each release prints its commit SHA in the workflow summary. You can also find
 it on the [releases page](https://github.com/nrkno/github-action-sematic-release/releases).

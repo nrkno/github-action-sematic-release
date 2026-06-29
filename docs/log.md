@@ -10,6 +10,13 @@ timestamp: 2026-06-30
 
 ### 2026-06-30
 
+- **Update** `README.md` — replaced digest-pinning paragraph in Security section with cosign keyless verification as the supply-chain integrity mechanism; updated recommendation to pin to release tag or commit SHA rather than `@main`
+- **Update** `docs/architecture.md` — replaced "Two-layer pinning" section with updated Security Model explaining why digest pinning was dropped (GITHUB_TOKEN cannot push to branch-protected main); documented cosign keyless signatures as the container-layer verification mechanism; updated two-layer table to reflect tag + cosign instead of tag + digest; timestamp updated to 2026-06-30
+- **Update** `action.yml` — image reference updated from `v0.1.2@sha256:…` to `v0.3.0` (mutable version tag, no digest suffix)
+- **Update** `.github/workflows/release.yml` — sed replacement in `Update action.yml image reference` step drops `@${DIGEST}` suffix so future releases write `:${TAG}` only
+
+### 2026-06-30
+
 - **Update** `docs/api-reference.md` — rewrote `semrel notify` section: removed all references to `pull_request` event, `SEMREL_RELEASED`, and `GITHUB_REF` PR parsing; replaced with release-event trigger model; documented `SEMREL_TAG` (required), `SEMREL_RELEASE_URL` (optional), `SEMREL_VERSION` (optional); documented commit-range fan-out to PRs, idempotent comment marker `<!-- semrel-notify:<tag> -->`; updated example to show `notify.yml` as a separate workflow (not a job in `release.yml`); separated permissions blocks for release vs notify workflows
 - **Update** `docs/configuration.md` — removed `SEMREL_RELEASED` row from notify env vars table; added `SEMREL_RELEASE_URL` row (scope=notify, auto-constructed if absent); updated `SEMREL_TAG` description to "Required for semrel notify"; updated section heading to reflect release-event payload sourcing
 - **Update** `docs/playbook.md` — updated first-release runbook to list `notify.yml` as a third workflow file (separate from `release.yml`), triggered by `on: release: types: [published]`; updated verify steps to show notify triggering from GitHub Release publication; updated skip-release runbook; added `fetch-tags: true` note for shallow clone fix

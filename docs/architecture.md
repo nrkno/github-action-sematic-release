@@ -3,7 +3,7 @@ type: Architecture
 title: semrel architecture
 description: Why semrel exists, internal package structure, and key design decisions including go-git, distroless, idempotency ladder, and shallow clone guard.
 tags: [architecture, supply-chain, go-git, distroless, cosign, idempotency]
-timestamp: 2026-06-29
+timestamp: 2026-06-30
 ---
 
 # Architecture
@@ -155,14 +155,33 @@ after the upstream maintainer's account was compromised and a malicious version 
 briefly published. semrel replaces it with a first-party binary built from source in
 CI, eliminating the dependency on a third-party action.
 
-### Two-layer pinning
+### Pinning and verification
 
-Consumers of this action are protected by two independent, complementary layers:
+The `action.yml` image reference uses a mutable version tag:
+
+```yaml
+image: docker://ghcr.io/nrkno/github-action-sematic-release:v1.2.3
+```
+
+`GITHUB_TOKEN` does not have permission to push directly to branch-protected `main`,
+so the digest-pinning approach (writing `@sha256:…` back into `action.yml` after
+every release) never reached `main` reliably. Every major production Docker action
+uses mutable version tags for exactly this reason.
+
+Supply-chain integrity is instead provided by **cosign keyless signatures**. On
+every release, the CI pipeline signs the image against the NRK GitHub Actions OIDC
+identity. Consumers can verify independently:
+
+```bash
+cosign verify ghcr.io/nrkno/github-action-sematic-release:v1.2.3 \
+  --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release/.*" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+```
 
 | Layer | Mechanism | What it protects against |
 | ----- | --------- | ------------------------ |
 | **Git layer** | `uses: …@<commit-SHA>` | Attacker force-pushes a tag to a malicious commit |
-| **Container layer** | `image: docker://…:<tag>@sha256:…` inside `action.yml` | Attacker overwrites the GHCR tag to point to a malicious image |
+| **Container layer** | cosign keyless signature on every release | Verifies the image was built by NRK's CI from the expected commit |
 
 #### Git layer — commit SHA pinning
 
@@ -172,19 +191,6 @@ tag to a different commit. A pinned tag (`@v1.2.3`) is not a security guarantee.
 Pinning by **commit SHA** (`@abc1234…`) is immutable — the SHA is a cryptographic
 hash of the commit content. GitHub will refuse to serve a different commit for a
 given SHA.
-
-#### Container layer — image digest pinning
-
-The `action.yml` image reference includes a `sha256:` digest alongside the tag:
-
-```yaml
-image: docker://ghcr.io/nrkno/github-action-sematic-release:v1.2.3@sha256:<digest>
-```
-
-This means even if someone overwrites the `v1.2.3` tag in the container registry,
-Actions will still pull the exact content identified by the digest. The cosign
-signature binds the digest to the NRK GitHub Actions OIDC identity, allowing
-independent verification.
 
 ### What these layers do NOT protect against
 
