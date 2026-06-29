@@ -29,6 +29,11 @@ All subcommands:
 Validates that every commit in the relevant range conforms to
 [Conventional Commits 1.0](https://www.conventionalcommits.org/).
 
+Before applying rules, `semrel lint` looks for a `.semrelrc.yml` file in the
+working directory and uses it to override default rule settings. See
+[Configuration — Lint configuration file](/docs/configuration.md#lint-configuration-file-semrelrcyml)
+for the full schema and available rules.
+
 ### Synopsis
 
 ```
@@ -56,7 +61,7 @@ semrel lint [--from-ref <ref>] [--to-ref <ref>]
 | Code | Meaning |
 | ---- | ------- |
 | `0` | All commits in range are valid conventional commits. |
-| `1` | One or more commits violated the conventional commit format. Violations are printed to stderr, one per commit: `commit <short-sha>: <rule>\n  <raw message>\n  example: <example>`. |
+| `1` | One or more commits violated the conventional commit format, **or** the `.semrelrc.yml` config file is present but malformed. Violations are printed to stderr, one per commit: `commit <short-sha>: <rule>\n  <raw message>\n  example: <example>`. |
 | `2` | System error (e.g., shallow repository, git operation failed). |
 
 ### Stdout

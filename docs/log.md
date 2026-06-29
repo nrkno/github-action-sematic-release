@@ -10,6 +10,8 @@ timestamp: 2026-06-29
 
 ### 2026-06-29
 
+- **Update** `docs/configuration.md` — added `.semrelrc.yml` lint configuration file section (capital-first-letter and require-scope rules, absent/malformed-file behaviour, working-directory note)
+- **Update** `docs/api-reference.md` — noted `.semrelrc.yml` lookup in lint subcommand description; updated exit code 1 to cover malformed config file
 - **Update** `docs/architecture.md` — added Security Model section covering two-layer pinning (git SHA + container digest), what each layer protects against, what is out of scope, and cosign verification recommendation
 - **Update** `docs/playbook.md` — added "How to pin securely" runbook: find commit SHA on releases page, use full SHA as workflow ref, optional cosign verification
 - **Update** `README.md` — added Security section (before Quick Start) with SHA-pinning warning, secure vs less-secure usage examples, and explanation of dual-layer supply-chain protection

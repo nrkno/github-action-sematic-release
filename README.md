@@ -182,7 +182,7 @@ jobs:
 
 | Subcommand | Description                                                              |
 | ---------- | ------------------------------------------------------------------------ |
-| `lint`     | Validate conventional commits in the current event's relevant range     |
+| `lint`     | Validate conventional commits in the current event's relevant range. Lint rules can be overridden via `.semrelrc.yml` at the repo root — see [docs/configuration.md](/docs/configuration.md#lint-configuration-file-semrelrcyml). |
 | `release`  | Compute next semver, create annotated tag, push, create GitHub Release  |
 | `notify`   | Post a deduplicated release comment on the merged PR                    |
 | `notes`    | Generate Markdown release notes from commits and linked PRs              |

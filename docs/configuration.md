@@ -8,9 +8,11 @@ timestamp: 2026-06-29
 
 # Configuration
 
-semrel is configured entirely through environment variables. There is no configuration
-file. All variables are provided automatically by GitHub Actions; no manual setup is
-required for standard workflows.
+semrel is configured primarily through environment variables. All variables are
+provided automatically by GitHub Actions; no manual setup is required for standard
+workflows. In addition, the `lint` subcommand supports an optional
+[`.semrelrc.yml` config file](#lint-configuration-file-semrelrcyml) for per-repo
+rule overrides.
 
 ---
 
@@ -120,6 +122,90 @@ The `notes` subcommand writes one additional field:
 | Field | Description |
 | ----- | ----------- |
 | `notes` | Full Markdown release notes body. |
+
+---
+
+## Lint configuration file (`.semrelrc.yml`)
+
+`semrel lint` looks for an optional `.semrelrc.yml` file in the working directory
+(the repo root, or `INPUT_WORKING_DIRECTORY` if that variable is set). When found,
+fields in the file override the built-in rule defaults; any field that is absent
+retains its default value.
+
+### File location
+
+Place `.semrelrc.yml` at the **root of the repository** being linted. If you set
+`INPUT_WORKING_DIRECTORY` in the GitHub Action, place it at the root of that
+directory instead.
+
+### Full YAML schema
+
+```yaml
+lint:
+  rules:
+    # Fail if a commit description starts with an uppercase letter.
+    # Default: true
+    capital-first-letter: true
+
+    # Fail if a commit has no scope (e.g. "feat: …" without "(scope)").
+    # Default: false
+    require-scope: false
+```
+
+### Rule reference
+
+#### `capital-first-letter` (default: `true`)
+
+Requires that the description part of a conventional commit begins with a
+lowercase letter.
+
+| Commit | Result |
+| ------ | ------ |
+| `feat: add login page` | ✅ Pass — description starts with lowercase |
+| `feat: Add login page` | ❌ Fail — description starts with uppercase |
+
+Set to `false` to allow uppercase descriptions:
+
+```yaml
+lint:
+  rules:
+    capital-first-letter: false
+```
+
+#### `require-scope` (default: `false`)
+
+When enabled, every commit must include a scope in parentheses after the type.
+
+| Commit | Result |
+| ------ | ------ |
+| `feat(auth): add login page` | ✅ Pass — scope `auth` is present |
+| `feat: add login page` | ❌ Fail — no scope provided |
+
+Enable with:
+
+```yaml
+lint:
+  rules:
+    require-scope: true
+```
+
+### Behaviour when the file is absent
+
+If `.semrelrc.yml` is not present, all default rules apply unchanged. No error
+is produced.
+
+### Behaviour when the file is malformed
+
+If the file exists but contains invalid YAML or does not conform to the expected
+schema, `semrel lint` exits with code `1` and prints a clear error message to
+stderr. Fix the file and re-run.
+
+### Working-directory note
+
+If `INPUT_WORKING_DIRECTORY` is set (e.g. `working-directory: services/my-svc`
+in your Action step), semrel changes to that directory before running `lint`.
+The `.semrelrc.yml` file is therefore resolved relative to that path, **not**
+the workflow workspace root.
 
 ---
 
