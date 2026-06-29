@@ -1,0 +1,216 @@
+---
+type: Playbook
+title: semrel playbook
+description: Step-by-step runbooks for common semrel operations — first release, debugging failures, handling conflicts, bootstrapping, and skipping a release.
+tags: [playbook, runbook, first-release, debugging, bootstrap, troubleshooting]
+timestamp: 2026-06-29
+---
+
+# Playbook
+
+## Runbook: first release in a new repo
+
+**Situation:** A repository has never had a semver tag and you want semrel to manage
+future releases.
+
+**Steps:**
+
+1. **Add the release workflow.** Copy the full workflow from the [README](/README.md)
+   to `.github/workflows/release.yml`. Ensure `fetch-depth: 0` is set on the checkout step.
+
+2. **Add the CI workflow.** Copy `.github/workflows/ci.yml` to lint commits on every PR.
+
+3. **Make sure all existing commits are conventional.** Run lint locally:
+
+   ```bash
+   go build -o semrel ./cmd/semrel
+   ./semrel lint
+   ```
+
+   Fix any violations before pushing. The first release reads all commits from the
+   beginning of history when there is no prior tag.
+
+4. **Push a releasable commit to `main`.** A `feat` or `fix` commit triggers a release.
+   A `chore`-only push produces `released=false` and no tag.
+
+5. **Verify.** The release workflow run should:
+   - Exit 0 on the `./semrel release` step
+   - Show `released=true` in step outputs
+   - Create tag `v0.0.1` (bootstrap always starts at `0.0.1`)
+   - Create a GitHub Release
+   - Trigger the `publish-image` and `notify` jobs
+
+---
+
+## How to run semrel in a new repo
+
+1. Copy both workflow files (`ci.yml`, `release.yml`) from this repository.
+2. The repository needs no special configuration — `GITHUB_TOKEN` is automatic.
+3. Grant the required permissions (see [README — Required permissions](/README.md)):
+   - `contents: write`
+   - `packages: write` (only if publishing a container image)
+   - `id-token: write` (only if signing with cosign)
+4. Push a conventional commit to `main`.
+
+---
+
+## What to do when release fails: conflict (exit 1)
+
+**Symptom:** `./semrel release` exits with code 1 and a log message like:
+
+```
+tag v1.2.3 exists but points to different commit: abc1234 vs def5678
+```
+
+**Cause:** Two workflow runs computed the same next version but tagged different
+commits. This can happen if two `feat` commits land in quick succession and two
+workflow runs start before either creates the tag.
+
+**Resolution:**
+
+1. Identify which tag is correct. Check `git log --oneline v1.2.3` and the GitHub
+   Release page.
+2. If the existing tag is wrong (points to the wrong commit), delete it:
+
+   ```bash
+   git push origin :refs/tags/v1.2.3   # delete remote tag
+   git tag -d v1.2.3                   # delete local tag
+   ```
+
+3. Re-run the failed workflow. It will proceed through the full flow and create the
+   tag correctly.
+
+4. If both tags are wrong, delete both and re-run from the later commit.
+
+---
+
+## What to do when release fails: shallow clone (exit 2)
+
+**Symptom:** `./semrel release` exits with code 2 and a message like:
+
+```
+level=ERROR msg="repository is shallow"
+```
+
+**Cause:** The checkout step used the default `fetch-depth: 1` (or omitted
+`fetch-depth`). semrel requires the full history.
+
+**Fix:** Add `fetch-depth: 0` to the `actions/checkout` step:
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+```
+
+This applies to every job that runs a semrel subcommand (`release`, `lint`, `notes`).
+
+---
+
+## How to skip a release
+
+**Situation:** You want to merge a commit to `main` without triggering a release
+(e.g., a documentation update, CI fix, or dependency bump that doesn't warrant a
+version bump).
+
+**Solution:** Use a non-releasable commit type. The following types produce
+`released=false`:
+
+- `docs`
+- `style`
+- `test`
+- `build`
+- `ci`
+- `chore`
+
+Example:
+
+```
+chore: update golangci-lint to v1.59
+```
+
+The release workflow still runs, but `released=false` means no tag is created, no
+GitHub Release is published, and the `publish-image` and `notify` jobs are skipped.
+
+---
+
+## How to bootstrap (no prior tags)
+
+When there are no annotated tags in the repository, semrel treats the entire commit
+history as the range and starts versioning from `v0.0.1`.
+
+- A `feat` or `fix` commit anywhere in history produces `v0.0.1`
+- A `BREAKING CHANGE` commit still starts at `v0.0.1` (no `v1.0.0` jump on bootstrap)
+
+If you want to start at a specific version (e.g., `v2.0.0`), create the tag manually
+before running semrel:
+
+```bash
+git tag -a v1.9.9 -m "pre-semrel baseline" <initial-commit-sha>
+git push origin v1.9.9
+```
+
+semrel will then compute the next version relative to `v1.9.9`.
+
+---
+
+## How to debug lint failures
+
+**Symptom:** The `lint-commits` CI job fails with:
+
+```
+commit abc1234: missing type
+  some unclear message
+  example: fix: correct handling of empty input
+```
+
+**Steps:**
+
+1. **Run lint locally** with the same range as CI:
+
+   ```bash
+   go build -o semrel ./cmd/semrel
+
+   # On a PR branch — same as the CI job
+   ./semrel lint --from-ref origin/main --to-ref HEAD
+   ```
+
+2. **Identify the offending commit.** The short SHA is printed with each violation.
+
+3. **Amend or reword** the commit:
+
+   ```bash
+   # If it's the most recent commit
+   git commit --amend
+
+   # If it's further back, use interactive rebase
+   git rebase -i origin/main
+   # Change "pick" to "reword" for the offending commit
+   ```
+
+4. **Force-push** the branch (PRs only — never force-push `main`).
+
+5. **Verify** by re-running lint locally before pushing.
+
+**Common violations:**
+
+| Message | Fix |
+| ------- | --- |
+| `missing type` | Add a type prefix: `fix:`, `feat:`, `chore:`, etc. |
+| `missing description` | Add a description after the colon: `feat: add retry logic` |
+| `subject too short` | Description must be at least 3 characters |
+| `type not allowed` | Use one of: `feat fix docs style refactor perf test build ci chore revert` |
+
+---
+
+## How to verify cosign signature
+
+After a release, verify the container image signature:
+
+```bash
+cosign verify ghcr.io/nrkno/github-action-sematic-release:v1.2.3 \
+  --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release/.*" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+```
+
+A successful verification prints the signing certificate and bundle to stdout.

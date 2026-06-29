@@ -1,0 +1,23 @@
+---
+type: Log
+title: semrel documentation log
+description: Dated change log for the semrel docs/ directory, recording every document creation and significant update.
+tags: [log, changelog, documentation]
+timestamp: 2026-06-29
+---
+
+# Documentation log
+
+### 2026-06-29
+
+- **Creation** `docs/architecture.md` — initial architecture documentation covering supply-chain context, package structure, go-git rationale, distroless container, idempotency ladder, SHA comparison, and shallow clone requirement
+- **Creation** `docs/configuration.md` — complete reference for all environment variables consumed by semrel, subcommand flags (lint --from-ref/--to-ref, release --dry-run), and GITHUB_OUTPUT fields (released, version, tag, major, minor, patch)
+- **Creation** `docs/api-reference.md` — subcommand synopsis, flags, exit codes, stdout/stderr behaviour, and GITHUB_OUTPUT fields for all four subcommands (lint, release, notify, notes)
+- **Creation** `docs/playbook.md` — step-by-step runbooks: first release in a new repo, shallow clone fix, conflict resolution, skipping a release, bootstrapping without prior tags, debugging lint failures, verifying cosign signatures
+- **Creation** `docs/index.md` — table of contents listing all docs with bundle-relative links
+- **Creation** `docs/log.md` — this log file, documenting the documentation pass
+- **Creation** `README.md` — project overview with badges, quick-start, full workflow snippet, permissions table, subcommand table, fetch-depth warning
+- **Creation** `CHANGELOG.md` — Keep a Changelog format with initial [0.1.0] entry
+- **Creation** `LICENSE` — MIT license, copyright NRK 2026
+- **Creation** `CONTRIBUTING.md` — conventional commit requirement, PR process, local dev setup, project structure overview
+- **Creation** `SECURITY.md` — vulnerability reporting policy, scope, disclosure policy, cosign verification instructions
