@@ -263,27 +263,22 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				}
 			}
 
-			// Rung 3: Full flow - create tag and release
+			// Rung 3: Full flow - create tag, push, then create release.
+			// Order is critical: PushTag MUST come before CreateRelease.
+			// If CreateRelease fires first, GitHub auto-creates a lightweight
+			// remote tag pointing at the commit. go-git then fails pushing the
+			// local annotated tag object over it ("object not found").
 			if !dryRun {
-				// Create annotated tag
 				releaseNotes := generateReleaseNotes(parsedCommits, nil)
+
+				// 1. Create local annotated tag
 				_, err := gitClient.CreateAnnotatedTag(versionTag, releaseNotes)
 				if err != nil {
 					logger.Error("failed to create tag", "error", err)
 					return err
 				}
 
-				// Create release
-				_, err = githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
-					TagName: versionTag,
-					Body:    releaseNotes,
-				})
-				if err != nil {
-					logger.Error("failed to create release", "error", err)
-					return err
-				}
-
-				// Push tag
+				// 2. Push tag to remote BEFORE creating the release
 				auth := git.BasicAuth{
 					Username: "x-access-token",
 					Password: ghEnv.Token,
@@ -291,6 +286,16 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				err = gitClient.PushTag(ctx, versionTag, auth)
 				if err != nil {
 					logger.Error("failed to push tag", "error", err)
+					return err
+				}
+
+				// 3. Create release — tag now exists on remote as annotated
+				_, err = githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
+					TagName: versionTag,
+					Body:    releaseNotes,
+				})
+				if err != nil {
+					logger.Error("failed to create release", "error", err)
 					return err
 				}
 			}
