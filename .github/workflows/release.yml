@@ -88,7 +88,6 @@ jobs:
           # commit that actually contains the correct image reference.
           git tag -f -a "${TAG}" -m "Release ${TAG}"
           git push origin "${TAG}" --force
-          git push origin main
       - name: Capture release commit SHA
         id: release_sha
         run: echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
