@@ -82,6 +82,20 @@ func NextVersion(current Version, bump BumpType) Version {
 	}
 }
 
+// String returns a human-readable name for the bump type.
+func (b BumpType) String() string {
+	switch b {
+	case BumpMajor:
+		return "major"
+	case BumpMinor:
+		return "minor"
+	case BumpPatch:
+		return "patch"
+	default:
+		return "none"
+	}
+}
+
 // DetectBumpType analyzes commit types and returns the appropriate bump type.
 // Types: "feat" → BumpMinor, "fix" → BumpPatch, "BREAKING CHANGE" → BumpMajor
 // If multiple types present, highest bump wins (Major > Minor > Patch).

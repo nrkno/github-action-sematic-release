@@ -522,3 +522,102 @@ func TestReleaseRung2TagDoesNotExist(t *testing.T) {
 		t.Errorf("normal release path (Rung 3) should not error, got: %v", err)
 	}
 }
+
+func TestCountByType(t *testing.T) {
+	commits := []conventional.Commit{
+		{Type: conventional.TypeFeat},
+		{Type: conventional.TypeFeat},
+		{Type: conventional.TypeFix},
+		{Type: conventional.TypeChore},
+	}
+
+	if got := countByType(commits, conventional.TypeFeat); got != 2 {
+		t.Errorf("countByType feat: want 2, got %d", got)
+	}
+	if got := countByType(commits, conventional.TypeFix); got != 1 {
+		t.Errorf("countByType fix: want 1, got %d", got)
+	}
+	if got := countByType(commits, conventional.TypeDocs); got != 0 {
+		t.Errorf("countByType docs: want 0, got %d", got)
+	}
+}
+
+func TestCountBreaking(t *testing.T) {
+	commits := []conventional.Commit{
+		{Type: conventional.TypeFeat, Breaking: true},
+		{Type: conventional.TypeFix, Breaking: false},
+		{Type: conventional.TypeFeat, Breaking: true},
+	}
+
+	if got := countBreaking(commits); got != 2 {
+		t.Errorf("countBreaking: want 2, got %d", got)
+	}
+}
+
+func TestFindTriggerCommit(t *testing.T) {
+	commits := []conventional.Commit{
+		{Type: conventional.TypeChore, Breaking: false, SHA: "aaa"},
+		{Type: conventional.TypeFeat, Breaking: false, SHA: "bbb"},
+		{Type: conventional.TypeFix, Breaking: false, SHA: "ccc"},
+		{Type: conventional.TypeFeat, Breaking: true, SHA: "ddd"},
+	}
+
+	// BumpMajor → first breaking commit
+	trigger := findTriggerCommit(commits, semver.BumpMajor)
+	if trigger == nil || trigger.SHA != "ddd" {
+		t.Errorf("BumpMajor trigger: want sha=ddd, got %v", trigger)
+	}
+
+	// BumpMinor → first feat commit
+	trigger = findTriggerCommit(commits, semver.BumpMinor)
+	if trigger == nil || trigger.SHA != "bbb" {
+		t.Errorf("BumpMinor trigger: want sha=bbb, got %v", trigger)
+	}
+
+	// BumpPatch → first fix commit
+	trigger = findTriggerCommit(commits, semver.BumpPatch)
+	if trigger == nil || trigger.SHA != "ccc" {
+		t.Errorf("BumpPatch trigger: want sha=ccc, got %v", trigger)
+	}
+
+	// BumpNone → nil
+	trigger = findTriggerCommit(commits, semver.BumpNone)
+	if trigger != nil {
+		t.Errorf("BumpNone trigger: want nil, got %v", trigger)
+	}
+}
+
+func TestGithubPRMapToNotesPRMap(t *testing.T) {
+	input := map[string]github.PR{
+		"sha1": {Number: 1, URL: "https://github.com/owner/repo/pull/1", Title: "feat: one"},
+		"sha2": {Number: 2, URL: "https://github.com/owner/repo/pull/2", Title: "fix: two"},
+	}
+
+	out := githubPRMapToNotesPRMap(input)
+	if len(out) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(out))
+	}
+	if out["sha1"].Number != 1 || out["sha1"].URL != input["sha1"].URL {
+		t.Errorf("sha1 entry mismatch: %+v", out["sha1"])
+	}
+	if out["sha2"].Number != 2 {
+		t.Errorf("sha2 number mismatch: %+v", out["sha2"])
+	}
+}
+
+func TestBumpTypeString(t *testing.T) {
+	cases := []struct {
+		bump semver.BumpType
+		want string
+	}{
+		{semver.BumpMajor, "major"},
+		{semver.BumpMinor, "minor"},
+		{semver.BumpPatch, "patch"},
+		{semver.BumpNone, "none"},
+	}
+	for _, tc := range cases {
+		if got := tc.bump.String(); got != tc.want {
+			t.Errorf("BumpType(%d).String() = %q, want %q", tc.bump, got, tc.want)
+		}
+	}
+}

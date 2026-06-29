@@ -227,25 +227,78 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				commitTypes = append(commitTypes, string(parsed.Type))
 			}
 
+			// Log 1: commits in release
+			logger.Info("commits in release",
+				"count", len(parsedCommits),
+				"feat", countByType(parsedCommits, conventional.TypeFeat),
+				"fix", countByType(parsedCommits, conventional.TypeFix),
+				"breaking", countBreaking(parsedCommits),
+			)
+
 			// Detect bump type
-			bumpType := semver.DetectBumpType(commitTypes)
+			bump := semver.DetectBumpType(commitTypes)
 
 			// Calculate next version
+			var currentVersion semver.Version
 			var nextVersion semver.Version
 			if latestTag == nil {
 				// Bootstrap: start at 0.0.1
 				nextVersion = semver.Version{Major: 0, Minor: 0, Patch: 1}
+				// Log 8: bootstrap case
+				logger.Info("no prior annotated tags found — bootstrapping version",
+					"version", nextVersion.Tag(),
+				)
 			} else {
 				// Parse current version from tag
-				currentVersion, err := semver.ParseVersion(latestTag.Name)
+				currentVersion, err = semver.ParseVersion(latestTag.Name)
 				if err != nil {
 					logger.Error("failed to parse version", "error", err)
 					return err
 				}
-				nextVersion = semver.NextVersion(currentVersion, bumpType)
+				nextVersion = semver.NextVersion(currentVersion, bump)
 			}
 
+			// Log 2: bump detected
+			logger.Info("bump detected",
+				"type", bump.String(),
+				"from", currentVersion.Tag(),
+				"to", nextVersion.Tag(),
+			)
+
 			versionTag := nextVersion.Tag()
+
+			// Fetch PRs for all commits in this release (used in logs 3/4 and release notes)
+			prMap := fetchPRsForCommits(ctx, githubClient, owner, repo, parsedCommits, logger)
+
+			// Log 3: PRs included in the release
+			if len(prMap) > 0 {
+				for sha, pr := range prMap {
+					logger.Info("PR in release",
+						"pr", fmt.Sprintf("#%d", pr.Number),
+						"title", pr.Title,
+						"sha", sha[:7],
+					)
+				}
+			}
+
+			// Log 4: release triggered by PR or commit
+			if triggerCommit := findTriggerCommit(parsedCommits, bump); triggerCommit != nil {
+				if pr, ok := prMap[triggerCommit.SHA]; ok {
+					logger.Info("release triggered by PR",
+						"pr", fmt.Sprintf("#%d", pr.Number),
+						"title", pr.Title,
+						"url", pr.URL,
+					)
+				} else {
+					logger.Info("release triggered by commit",
+						"sha", triggerCommit.ShortSHA,
+						"message", triggerCommit.RawMessage,
+					)
+				}
+			}
+
+			// Convert github.PR map to notes.PR map for release notes generation
+			notesPRMap := githubPRMapToNotesPRMap(prMap)
 
 			// Idempotency ladder
 			// Rung 1: Check if release already exists
@@ -278,8 +331,8 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				}
 				// Tag already at HEAD — just create the GitHub release (idempotent retry)
 				if !dryRun {
-					releaseNotes := generateReleaseNotes(parsedCommits, nil)
-					_, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
+					releaseNotes := generateReleaseNotes(parsedCommits, notesPRMap)
+					release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
 						TagName: versionTag,
 						Body:    releaseNotes,
 					})
@@ -287,6 +340,11 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 						logger.Error("failed to create release for existing tag", "error", err)
 						return err
 					}
+					// Log 7: GitHub release created
+					logger.Info("created GitHub release",
+						"tag", release.TagName,
+						"url", release.HTMLURL,
+					)
 				}
 				logger.Info("created release for existing tag", "tag", versionTag)
 				return outputReleaseFields(ghEnv.Output, nextVersion, true)
@@ -299,14 +357,19 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			// remote tag pointing at the commit. go-git then fails pushing the
 			// local annotated tag object over it ("object not found").
 			if !dryRun {
-				releaseNotes := generateReleaseNotes(parsedCommits, nil)
+				releaseNotes := generateReleaseNotes(parsedCommits, notesPRMap)
 
 				// 1. Create local annotated tag
-				_, err := gitClient.CreateAnnotatedTag(versionTag, releaseNotes)
+				tag, err := gitClient.CreateAnnotatedTag(versionTag, releaseNotes)
 				if err != nil {
 					logger.Error("failed to create tag", "error", err)
 					return err
 				}
+				// Log 5: annotated tag created
+				logger.Info("created annotated tag",
+					"tag", tag.Name,
+					"commit", tag.TargetSHA()[:7],
+				)
 
 				// 2. Push tag to remote BEFORE creating the release
 				auth := git.BasicAuth{
@@ -318,9 +381,11 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 					logger.Error("failed to push tag", "error", err)
 					return err
 				}
+				// Log 6: tag pushed
+				logger.Info("pushed tag to origin", "tag", versionTag)
 
 				// 3. Create release — tag now exists on remote as annotated
-				_, err = githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
+				release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
 					TagName: versionTag,
 					Body:    releaseNotes,
 				})
@@ -328,6 +393,11 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 					logger.Error("failed to create release", "error", err)
 					return err
 				}
+				// Log 7: GitHub release created
+				logger.Info("created GitHub release",
+					"tag", release.TagName,
+					"url", release.HTMLURL,
+				)
 			}
 
 			logger.Info("release created", "tag", versionTag)
@@ -501,6 +571,69 @@ func cmdNotes(gitClient GitClient, githubClient GitHubClient, logger *slog.Logge
 }
 
 // Helper functions
+
+func countByType(commits []conventional.Commit, t conventional.CommitType) int {
+	n := 0
+	for _, c := range commits {
+		if c.Type == t {
+			n++
+		}
+	}
+	return n
+}
+
+func countBreaking(commits []conventional.Commit) int {
+	n := 0
+	for _, c := range commits {
+		if c.Breaking {
+			n++
+		}
+	}
+	return n
+}
+
+func fetchPRsForCommits(ctx context.Context, gh GitHubClient, owner, repo string, commits []conventional.Commit, logger *slog.Logger) map[string]github.PR {
+	prMap := make(map[string]github.PR)
+	for _, commit := range commits {
+		prs, err := gh.ListPRsForCommit(ctx, owner, repo, commit.SHA)
+		if err != nil {
+			logger.Warn("failed to list PRs for commit", "sha", commit.ShortSHA, "error", err)
+			continue
+		}
+		if len(prs) > 0 {
+			prMap[commit.SHA] = prs[0]
+		}
+	}
+	return prMap
+}
+
+func findTriggerCommit(commits []conventional.Commit, bump semver.BumpType) *conventional.Commit {
+	for i := range commits {
+		switch bump {
+		case semver.BumpMajor:
+			if commits[i].Breaking {
+				return &commits[i]
+			}
+		case semver.BumpMinor:
+			if commits[i].Type == conventional.TypeFeat {
+				return &commits[i]
+			}
+		case semver.BumpPatch:
+			if commits[i].Type == conventional.TypeFix {
+				return &commits[i]
+			}
+		}
+	}
+	return nil
+}
+
+func githubPRMapToNotesPRMap(m map[string]github.PR) map[string]notes.PR {
+	out := make(map[string]notes.PR, len(m))
+	for k, pr := range m {
+		out[k] = notes.PR{Number: pr.Number, URL: pr.URL}
+	}
+	return out
+}
 
 func generateReleaseNotes(commits []conventional.Commit, prMap map[string]notes.PR) string {
 	if prMap == nil {

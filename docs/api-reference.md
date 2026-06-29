@@ -122,6 +122,22 @@ Written on exit 0 in all cases (released or not):
 
 Nothing. Log messages go to stderr.
 
+### Log output
+
+`semrel release` emits the following structured `slog.Info` lines to stderr, providing a
+narrative of the release in GitHub Actions logs:
+
+| When | Key | Description |
+| ---- | --- | ----------- |
+| After parsing commits | `msg=commits in release` | `count` total parsed commits, `feat` feature count, `fix` fix count, `breaking` breaking-change count. |
+| Bootstrap path only (no prior tags) | `msg=no prior annotated tags found — bootstrapping version` | `version` — the computed bootstrap tag (e.g. `v0.0.1`). |
+| After version computed | `msg=bump detected` | `type` (`major`/`minor`/`patch`/`none`), `from` previous tag, `to` next tag. |
+| Once per commit with an associated PR | `msg=PR in release` | `pr` (`#N`), `title`, `sha` (7-char). |
+| After identifying the highest-bump commit | `msg=release triggered by PR` | `pr` (`#N`), `title`, `url`. Falls back to `msg=release triggered by commit` with `sha` and `message` if no PR is found. |
+| After local annotated tag created (Rung 3) | `msg=created annotated tag` | `tag` name, `commit` 7-char SHA. |
+| After tag pushed to origin (Rung 3) | `msg=pushed tag to origin` | `tag` name. |
+| After GitHub Release created (Rung 2 or 3) | `msg=created GitHub release` | `tag` name, `url` GitHub Release HTML URL. |
+
 ### Idempotency
 
 `release` is safe to re-run. See [Architecture — Idempotency ladder](/docs/architecture.md)

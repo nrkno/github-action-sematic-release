@@ -10,6 +10,10 @@ timestamp: 2026-06-29
 
 ### 2026-06-29
 
+- **Update** `docs/api-reference.md` — added "Log output" subsection to `semrel release` documenting the 8 structured slog.Info lines emitted during a release (commits in release, bump detected, PRs in release, release triggered by, created annotated tag, pushed tag, created GitHub release, bootstrap case)
+
+### 2026-06-29
+
 - **Update** `docs/configuration.md` — added `.semrelrc.yml` lint configuration file section (capital-first-letter and require-scope rules, absent/malformed-file behaviour, working-directory note)
 - **Update** `docs/api-reference.md` — noted `.semrelrc.yml` lookup in lint subcommand description; updated exit code 1 to cover malformed config file
 - **Update** `docs/architecture.md` — added Security Model section covering two-layer pinning (git SHA + container digest), what each layer protects against, what is out of scope, and cosign verification recommendation
