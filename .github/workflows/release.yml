@@ -82,7 +82,7 @@ jobs:
           git commit -m "chore(release): update action image to ${TAG}"
           # Move the annotated tag to the new commit so consumers pin to the
           # commit that actually contains the correct image reference.
-          git tag -f "${TAG}"
+          git tag -f -a "${TAG}" -m "Release ${TAG}"
           git push origin "${TAG}" --force
           git push origin main
       - name: Capture release commit SHA

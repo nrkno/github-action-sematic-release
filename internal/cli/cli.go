@@ -252,7 +252,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			if err == nil && existingRelease != nil {
 				// Release exists, noop
 				logger.Info("release already exists", "tag", versionTag)
-				return outputReleaseFields(ghEnv.Output, nextVersion, true)
+				return outputReleaseFields(ghEnv.Output, nextVersion, false)
 			}
 
 			// Rung 2: Check if tag exists with matching SHA
