@@ -289,12 +289,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 						"title", pr.Title,
 						"url", pr.URL,
 					)
-				} else {
-					logger.Info("release triggered by commit",
-						"sha", triggerCommit.ShortSHA,
-						"message", triggerCommit.RawMessage,
-					)
-				}
+			} else {
+				logger.Info("release triggered by commit",
+					"sha", triggerCommit.ShortSHA,
+					"message", commitSubject(triggerCommit.RawMessage),
+				)
+			}
 			}
 
 			// Convert github.PR map to notes.PR map for release notes generation
@@ -641,6 +641,14 @@ func generateReleaseNotes(commits []conventional.Commit, prMap map[string]notes.
 	}
 	releaseNotes := notes.Generate(commits, prMap)
 	return releaseNotes.Body
+}
+
+// commitSubject returns the first line of a commit message (the subject).
+func commitSubject(message string) string {
+	if i := strings.Index(message, "\n"); i != -1 {
+		return message[:i]
+	}
+	return message
 }
 
 func outputReleaseFields(outputFile string, version semver.Version, released bool) error {

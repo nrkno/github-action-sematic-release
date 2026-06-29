@@ -16,6 +16,9 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read    # required for ListPRsForCommit (PR logging)
     outputs:
       version: ${{ steps.semrel.outputs.version }}
       tag: ${{ steps.semrel.outputs.tag }}
