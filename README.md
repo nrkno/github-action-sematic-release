@@ -1,6 +1,6 @@
 # semrel
 
-[![Go version](https://img.shields.io/badge/go-1.23-00ADD8?logo=go)](https://go.dev/dl/)
+[![Go version](https://img.shields.io/badge/go-1.25-00ADD8?logo=go)](https://go.dev/dl/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/nrkno/github-action-sematic-release/actions/workflows/ci.yml/badge.svg)](https://github.com/nrkno/github-action-sematic-release/actions/workflows/ci.yml)
 
@@ -67,7 +67,7 @@ jobs:
           fetch-depth: 0        # ⚠️  required — see warning below
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
+          go-version: '1.25'
       - run: go build -o semrel github.com/nrkno/semrel/cmd/semrel
       - id: semrel
         env:
@@ -115,7 +115,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
+          go-version: '1.25'
       - run: go build -o semrel ./cmd/semrel
       - id: semrel
         env:
@@ -158,7 +158,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
+          go-version: '1.25'
       - run: go build -o semrel ./cmd/semrel
       - env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
