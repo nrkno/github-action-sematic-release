@@ -36,6 +36,15 @@ func (t *Tag) TargetSHA() string {
 	return t.targetSHA
 }
 
+// NewTag constructs a Tag with all fields set. Intended for use in tests.
+func NewTag(name, sha, targetSHA string) *Tag {
+	return &Tag{
+		Name:      name,
+		SHA:       sha,
+		targetSHA: targetSHA,
+	}
+}
+
 // Repository wraps a go-git repository
 type Repository struct {
 	raw *gogit.Repository
@@ -268,6 +277,24 @@ func (r *Repository) ListCommitsBetweenTags(from, to *Tag) ([]Commit, error) {
 	}
 
 	return commits, nil
+}
+
+// FindTagByName looks up a single annotated tag by name.
+// Returns (nil, nil) if the tag does not exist or is a lightweight tag.
+func (r *Repository) FindTagByName(name string) (*Tag, error) {
+	ref, err := r.raw.Tag(name)
+	if err != nil {
+		return nil, nil // tag does not exist
+	}
+	obj, err := r.raw.TagObject(ref.Hash())
+	if err != nil {
+		return nil, nil // lightweight tag — not an annotated tag object
+	}
+	return &Tag{
+		Name:      name,
+		SHA:       obj.Hash.String(),
+		targetSHA: obj.Target.String(),
+	}, nil
 }
 
 // CreateAnnotatedTag creates an annotated tag at HEAD.

@@ -57,6 +57,10 @@ func (c *lazyGitClient) FindLatestAnnotatedTag() (*git.Tag, error) {
 	return nil, c.err
 }
 
+func (c *lazyGitClient) FindTagByName(name string) (*git.Tag, error) {
+	return nil, c.err
+}
+
 func (c *lazyGitClient) ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error) {
 	return nil, c.err
 }

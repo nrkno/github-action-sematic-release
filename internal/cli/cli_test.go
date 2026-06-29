@@ -24,15 +24,17 @@ func newTestTag(name, sha string) *git.Tag {
 	}
 }
 type mockGitClient struct {
-	latestTag       *git.Tag
-	latestTagErr    error
-	commits         []git.Commit
-	commitsErr      error
-	createdTag      *git.Tag
-	createTagErr    error
-	pushedTag       string
-	pushTagErr      error
-	isShallowRepo   bool
+	latestTag          *git.Tag
+	latestTagErr       error
+	findTagByNameTag   *git.Tag
+	findTagByNameErr   error
+	commits            []git.Commit
+	commitsErr         error
+	createdTag         *git.Tag
+	createTagErr       error
+	pushedTag          string
+	pushTagErr         error
+	isShallowRepo      bool
 }
 
 func (m *mockGitClient) FindLatestAnnotatedTag() (*git.Tag, error) {
@@ -40,6 +42,10 @@ func (m *mockGitClient) FindLatestAnnotatedTag() (*git.Tag, error) {
 		return nil, git.ShallowRepoError{Message: "repository is a shallow clone"}
 	}
 	return m.latestTag, m.latestTagErr
+}
+
+func (m *mockGitClient) FindTagByName(name string) (*git.Tag, error) {
+	return m.findTagByNameTag, m.findTagByNameErr
 }
 
 func (m *mockGitClient) ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error) {
@@ -446,5 +452,73 @@ func TestGenerateReleaseNotes(t *testing.T) {
 
 	if !bytes.Contains([]byte(result), []byte("add feature")) {
 		t.Errorf("release notes should contain commit description, got: %s", result)
+	}
+}
+
+// TestReleaseRung2TagExistsAtHead verifies the idempotent retry path:
+// FindTagByName returns a tag whose targetSHA matches HEAD → release is created without re-tagging.
+func TestReleaseRung2TagExistsAtHead(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+
+	headSHA := "aabbccddeeff00112233445566778899aabbccdd"
+
+	// Simulate: latestTag is v0.0.1, HEAD has one new feat commit → next version is v0.0.2.
+	// FindTagByName("v0.0.2") returns a tag pointing at headSHA (previous interrupted run).
+	gitClient := &mockGitClient{
+		latestTag: newTestTag("v0.0.1", "oldsha1"),
+		commits: []git.Commit{
+			{
+				SHA:      headSHA,
+				ShortSHA: headSHA[:7],
+				Message:  "feat: new feature",
+			},
+		},
+		// FindTagByName returns a tag at headSHA — simulates interrupted run
+		findTagByNameTag: git.NewTag("v0.0.2", "tagobjectsha", headSHA),
+	}
+
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound, // Rung 1: no release yet
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	// dry-run so CreateRelease mock path is skipped (we just check no error)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err != nil {
+		t.Errorf("Rung 2 retry path should not error, got: %v", err)
+	}
+}
+
+// TestReleaseRung2TagDoesNotExist verifies the normal path:
+// FindTagByName returns nil → falls through to full release (Rung 3).
+func TestReleaseRung2TagDoesNotExist(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+
+	gitClient := &mockGitClient{
+		latestTag: newTestTag("v0.0.1", "oldsha1"),
+		commits: []git.Commit{
+			{
+				SHA:      "aabbccddeeff00112233445566778899aabbccdd",
+				ShortSHA: "aabbccd",
+				Message:  "feat: new feature",
+			},
+		},
+		findTagByNameTag: nil, // tag does not exist yet
+	}
+
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err != nil {
+		t.Errorf("normal release path (Rung 3) should not error, got: %v", err)
 	}
 }

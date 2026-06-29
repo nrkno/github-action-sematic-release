@@ -21,6 +21,7 @@ import (
 // Interface injection for testing
 type GitClient interface {
 	FindLatestAnnotatedTag() (*git.Tag, error)
+	FindTagByName(name string) (*git.Tag, error)
 	ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error)
 	CreateAnnotatedTag(name, message string) (*git.Tag, error)
 	PushTag(ctx context.Context, tagName string, auth git.BasicAuth) error
@@ -255,36 +256,42 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				return outputReleaseFields(ghEnv.Output, nextVersion, false)
 			}
 
-			// Rung 2: Check if tag exists with matching SHA
-			if latestTag != nil {
-				// Get current HEAD SHA
-				// For now, we'll assume we can get it from the environment or git
-				// This is a simplification
+			// Rung 2: Check whether the computed next-version tag already exists.
+			// This handles the retry case: tag was pushed in a previous interrupted
+			// run, but the GitHub release was not yet created.
+			existingVersionTag, err := gitClient.FindTagByName(versionTag)
+			if err != nil {
+				logger.Error("failed to look up version tag", "tag", versionTag, "error", err)
+				return err
+			}
+			if existingVersionTag != nil {
+				// The next-version tag already exists — check it points to HEAD
 				headCommits, err := gitClient.ListCommitsSinceTag(nil)
-				if err == nil && len(headCommits) > 0 {
-					headSHA := headCommits[0].SHA
-					if latestTag.TargetSHA() == headSHA {
-						// Tag exists and SHA matches, create release only
-						if !dryRun {
-							releaseNotes := generateReleaseNotes(parsedCommits, nil)
-							_, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
-								TagName: versionTag,
-								Body:    releaseNotes,
-							})
-							if err != nil {
-								logger.Error("failed to create release", "error", err)
-								return err
-							}
-						}
-						logger.Info("created release for existing tag", "tag", versionTag)
-						return outputReleaseFields(ghEnv.Output, nextVersion, true)
-					} else if latestTag.TargetSHA() != headSHA {
-						// Tag exists but SHA mismatch, conflict
-						return fmt.Errorf("tag %s exists but points to different commit: %s vs %s",
-							latestTag.Name, latestTag.TargetSHA()[:7], headSHA[:7])
+				if err != nil || len(headCommits) == 0 {
+					return fmt.Errorf("could not determine HEAD SHA")
+				}
+				headSHA := headCommits[0].SHA
+				if existingVersionTag.TargetSHA() != headSHA {
+					// Tag points to a different commit — genuine conflict
+					return fmt.Errorf("tag %s exists but points to different commit: %s vs %s",
+						versionTag, existingVersionTag.TargetSHA()[:7], headSHA[:7])
+				}
+				// Tag already at HEAD — just create the GitHub release (idempotent retry)
+				if !dryRun {
+					releaseNotes := generateReleaseNotes(parsedCommits, nil)
+					_, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
+						TagName: versionTag,
+						Body:    releaseNotes,
+					})
+					if err != nil {
+						logger.Error("failed to create release for existing tag", "error", err)
+						return err
 					}
 				}
+				logger.Info("created release for existing tag", "tag", versionTag)
+				return outputReleaseFields(ghEnv.Output, nextVersion, true)
 			}
+			// Rung 3 (full flow) falls through here
 
 			// Rung 3: Full flow - create tag, push, then create release.
 			// Order is critical: PushTag MUST come before CreateRelease.
