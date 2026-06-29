@@ -100,7 +100,7 @@ func (c *Client) CreateRelease(ctx context.Context, owner, repo string, opts Cre
 	rel, resp, err := c.client.Repositories.CreateRelease(ctx, owner, repo, input)
 	if err != nil {
 		// Check if this is a 422 with already_exists error code
-		if resp != nil && resp.Response != nil && resp.Response.StatusCode == http.StatusUnprocessableEntity {
+		if resp != nil && resp.Response != nil && resp.StatusCode == http.StatusUnprocessableEntity {
 			if isAlreadyExists(resp.Response) {
 				// Recover by fetching the existing release
 				return c.GetReleaseByTag(ctx, owner, repo, opts.TagName)

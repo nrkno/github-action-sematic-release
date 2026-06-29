@@ -2,6 +2,7 @@ package conventional
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -254,10 +255,21 @@ func ValidateAll(commits []RawCommit) []Violation {
 	return violations
 }
 
-// IsMergeCommit returns true if the message starts with "Merge branch" or "Merge pull request"
+// mergePattern matches GitHub Actions auto-generated merge commits:
+// "Merge {sha} into {sha}" (generated when CI runs on a PR).
+var mergePattern = regexp.MustCompile(`(?i)^Merge [0-9a-f]+ into [0-9a-f]+`)
+
+// IsMergeCommit returns true for any merge-commit message variant:
+//   - "Merge branch …"      (local git merge)
+//   - "Merge pull request …" (GitHub PR merge)
+//   - "Merge {sha} into {sha}" (GitHub Actions CI merge commit)
+//   - "Merge remote-tracking branch …"
 func IsMergeCommit(message string) bool {
 	trimmed := strings.TrimSpace(message)
-	return strings.HasPrefix(trimmed, "Merge branch") || strings.HasPrefix(trimmed, "Merge pull request")
+	return strings.HasPrefix(trimmed, "Merge branch") ||
+		strings.HasPrefix(trimmed, "Merge pull request") ||
+		strings.HasPrefix(trimmed, "Merge remote-tracking branch") ||
+		mergePattern.MatchString(trimmed)
 }
 
 // shortSHA returns the first 7 characters of a SHA

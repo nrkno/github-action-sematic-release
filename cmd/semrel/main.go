@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -39,7 +40,7 @@ func main() {
 
 	// Create and execute root command
 	root := cli.Root(gitClient, githubClient, logger)
-	root.Version = version
+	root.Version = fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date)
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		logger.Error("command failed", "error", err)

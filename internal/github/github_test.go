@@ -168,7 +168,8 @@ func TestCreateRelease(t *testing.T) {
 		callCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			callCount++
-			if r.Method == "POST" {
+			switch r.Method {
+			case "POST":
 				// First call: POST to create release returns 422 already_exists
 				w.WriteHeader(http.StatusUnprocessableEntity)
 				body, _ := json.Marshal(map[string]interface{}{
@@ -177,7 +178,7 @@ func TestCreateRelease(t *testing.T) {
 					},
 				})
 				w.Write(body)
-			} else if r.Method == "GET" {
+			case "GET":
 				// Second call: GET to fetch existing release
 				w.WriteHeader(http.StatusOK)
 				body, _ := json.Marshal(map[string]interface{}{
