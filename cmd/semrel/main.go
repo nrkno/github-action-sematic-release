@@ -62,6 +62,9 @@ func main() {
 		logger.Error("failed to create GitHub client", "error", err)
 		os.Exit(1)
 	}
+	if os.Getenv("GITHUB_TOKEN") == "" {
+		logger.Warn("GITHUB_TOKEN is not set — GitHub API calls will return 401")
+	}
 
 	// Create and execute root command
 	root := cli.Root(gitClient, githubClient, logger)
