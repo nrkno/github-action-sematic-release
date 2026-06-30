@@ -272,7 +272,10 @@ func (r *Repository) ListCommitsSinceTag(tag *Tag) ([]Commit, error) {
 		return nil, fmt.Errorf("failed to get HEAD: %w", err)
 	}
 
-	iter, err := r.raw.Log(&gogit.LogOptions{From: head.Hash()})
+	iter, err := r.raw.Log(&gogit.LogOptions{
+		From:  head.Hash(),
+		Order: gogit.LogOrderCommitterTime,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log iterator: %w", err)
 	}
@@ -313,7 +316,10 @@ func (r *Repository) ListCommitsSinceTag(tag *Tag) ([]Commit, error) {
 func (r *Repository) ListCommitsBetweenTags(from, to *Tag) ([]Commit, error) {
 	toHash := plumbing.NewHash(to.TargetSHA())
 
-	iter, err := r.raw.Log(&gogit.LogOptions{From: toHash})
+	iter, err := r.raw.Log(&gogit.LogOptions{
+		From:  toHash,
+		Order: gogit.LogOrderCommitterTime,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log iterator: %w", err)
 	}

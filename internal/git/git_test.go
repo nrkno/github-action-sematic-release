@@ -3,6 +3,7 @@ package git
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -823,5 +824,140 @@ func TestFindTagByName_LightweightTag(t *testing.T) {
 	// For lightweight tags SHA == targetSHA
 	if tag.SHA != tag.TargetSHA() {
 		t.Errorf("expected SHA == targetSHA for lightweight tag: SHA=%s targetSHA=%s", tag.SHA, tag.TargetSHA())
+	}
+}
+
+// createCommitOffParent stores a commit object directly in the repository's object database
+// with an explicit parent hash, WITHOUT updating HEAD. Used to create detached feature-branch
+// commits that are later wired into a merge commit.
+func createCommitOffParent(t *testing.T, repo *gogit.Repository, message string, when time.Time, parentHash plumbing.Hash) plumbing.Hash {
+	t.Helper()
+
+	parent, err := repo.CommitObject(parentHash)
+	if err != nil {
+		t.Fatalf("createCommitOffParent: failed to get parent commit: %v", err)
+	}
+
+	sig := object.Signature{Name: "Test Author", Email: "test@example.com", When: when}
+	c := &object.Commit{
+		Author:       sig,
+		Committer:    sig,
+		Message:      message,
+		TreeHash:     parent.TreeHash,
+		ParentHashes: []plumbing.Hash{parentHash},
+	}
+
+	obj := repo.Storer.NewEncodedObject()
+	if err := c.Encode(obj); err != nil {
+		t.Fatalf("createCommitOffParent: failed to encode commit: %v", err)
+	}
+	hash, err := repo.Storer.SetEncodedObject(obj)
+	if err != nil {
+		t.Fatalf("createCommitOffParent: failed to store commit: %v", err)
+	}
+	return hash
+}
+
+// createMergeCommit stores a two-parent merge commit and advances HEAD's branch ref to it.
+func createMergeCommit(t *testing.T, repo *gogit.Repository, message string, when time.Time, parent1, parent2 plumbing.Hash) plumbing.Hash {
+	t.Helper()
+
+	p1, err := repo.CommitObject(parent1)
+	if err != nil {
+		t.Fatalf("createMergeCommit: failed to get parent1 commit: %v", err)
+	}
+
+	sig := object.Signature{Name: "Test Author", Email: "test@example.com", When: when}
+	c := &object.Commit{
+		Author:       sig,
+		Committer:    sig,
+		Message:      message,
+		TreeHash:     p1.TreeHash, // use parent1's tree as the merged result
+		ParentHashes: []plumbing.Hash{parent1, parent2},
+	}
+
+	obj := repo.Storer.NewEncodedObject()
+	if err := c.Encode(obj); err != nil {
+		t.Fatalf("createMergeCommit: failed to encode commit: %v", err)
+	}
+	hash, err := repo.Storer.SetEncodedObject(obj)
+	if err != nil {
+		t.Fatalf("createMergeCommit: failed to store commit: %v", err)
+	}
+
+	// Advance the current branch ref to point to the merge commit.
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatalf("createMergeCommit: failed to get HEAD: %v", err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(head.Name(), hash)); err != nil {
+		t.Fatalf("createMergeCommit: failed to update branch ref: %v", err)
+	}
+
+	return hash
+}
+
+// TestListCommitsSinceTag_MergeCommitIncludesFeatureBranch is the regression test for the
+// DFS traversal bug. With DFS (the old default), traversal dives into parent[0] (main chain)
+// and hits the stop-hash before backtracking to parent[1] (feature branch), silently dropping
+// all feat/fix commits from traditionally-merged PRs.
+//
+// Repo shape:
+//
+//	C0(tag) ← C2(main) ← M(merge)
+//	       └── C1(feat) ──┘
+func TestListCommitsSinceTag_MergeCommitIncludesFeatureBranch(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+
+	// C0: base commit, tagged as v1.0.0 (this is the stop hash)
+	c0 := createCommitWithTime(t, repo, "base.txt", "base", "chore: initial commit", now)
+	tagObj := createAnnotatedTag(t, repo, "v1.0.0", "Release v1.0.0")
+
+	// C1: feature branch commit off C0 — stored in the object DB, HEAD not moved
+	featureMsg := "feat: add new feature"
+	c1Hash := createCommitOffParent(t, repo, featureMsg, now.Add(1*time.Second), c0.Hash)
+
+	// C2: main commit off C0 — HEAD is still at C0, so worktree parent = C0
+	c2 := createCommitWithTime(t, repo, "main.txt", "main work", "fix: main change", now.Add(2*time.Second))
+
+	// M: merge commit with parents [C2, C1] — HEAD advances to M
+	createMergeCommit(t, repo, "Merge feature into main", now.Add(3*time.Second), c2.Hash, c1Hash)
+
+	r := &Repository{raw: repo}
+	tag := &Tag{
+		Name:      "v1.0.0",
+		SHA:       tagObj.Hash.String(),
+		targetSHA: tagObj.Target.String(),
+	}
+
+	commits, err := r.ListCommitsSinceTag(tag)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Expected: M + C2 + C1 = 3 commits; C0 is excluded (it is the stop hash).
+	if len(commits) != 3 {
+		msgs := make([]string, len(commits))
+		for i, c := range commits {
+			msgs[i] = strings.TrimSpace(c.Message)
+		}
+		t.Fatalf("expected 3 commits (merge + main + feature), got %d: %v", len(commits), msgs)
+	}
+
+	// The feature branch commit MUST be present — this is the bug guard.
+	found := false
+	for _, c := range commits {
+		if strings.Contains(c.Message, featureMsg) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		msgs := make([]string, len(commits))
+		for i, c := range commits {
+			msgs[i] = strings.TrimSpace(c.Message)
+		}
+		t.Errorf("feature branch commit %q not found in results; commits: %v", featureMsg, msgs)
 	}
 }
