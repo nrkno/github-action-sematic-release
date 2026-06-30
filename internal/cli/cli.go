@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/nrkno/semrel/internal/conventional"
@@ -82,6 +83,12 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 			cfg := conventional.DefaultConfig()
 			if cfgLoaded != nil {
 				cfg = *cfgLoaded
+				logger.Debug("loaded .semrelrc.yml",
+					"path", filepath.Join(wd, ".semrelrc.yml"),
+					"tag_prefix", cfg.TagPrefix,
+					"release_branches", cfg.ReleaseBranches,
+					"initial_version", cfg.InitialVersion,
+				)
 			}
 			lintOpts := conventional.LintOptions{
 				CapitalFirstLetter: cfg.Lint.Rules.CapitalFirstLetter,
@@ -149,6 +156,13 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 				return err
 			}
 
+			logger.Info("lint range",
+				"event", ghEnv.EventName,
+				"from", fromRef,
+				"to", toRef,
+				"commit_count", len(commits),
+			)
+
 			// Convert to RawCommit for validation
 			rawCommits := make([]conventional.RawCommit, len(commits))
 			for i, c := range commits {
@@ -162,12 +176,15 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 			violations := conventional.ValidateAll(rawCommits, lintOpts)
 
 			if len(violations) > 0 {
-				// Output violations to stderr
 				for _, v := range violations {
-					fmt.Fprintf(os.Stderr, "commit %s: %s\n  %s\n  example: %s\n",
-						v.ShortSHA, v.Rule, v.RawMessage, v.Example)
+					logger.Error("commit violation",
+						"sha", v.ShortSHA,
+						"rule", v.Rule,
+						"message", v.RawMessage,
+						"example", v.Example,
+					)
 				}
-				return fmt.Errorf("commit validation failed")
+				return fmt.Errorf("%d commit violation(s) found", len(violations))
 			}
 
 			return nil
@@ -203,6 +220,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			cfg := conventional.DefaultConfig()
 			if cfgLoaded != nil {
 				cfg = *cfgLoaded
+				logger.Debug("loaded .semrelrc.yml",
+					"path", filepath.Join(wd, ".semrelrc.yml"),
+					"tag_prefix", cfg.TagPrefix,
+					"release_branches", cfg.ReleaseBranches,
+					"initial_version", cfg.InitialVersion,
+				)
 			}
 
 			// Step 2: Validate InitialVersion early (before any git/GitHub I/O)
@@ -239,7 +262,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			owner, repo := parts[0], parts[1]
 
 			// Step 4: Find latest tag using configured prefix
+			t0 := time.Now()
 			latestTag, err := gitClient.FindLatestAnnotatedTag(cfg.TagPrefix)
+			logger.Debug("FindLatestAnnotatedTag",
+				"duration_ms", time.Since(t0).Milliseconds(),
+				"found", latestTag != nil,
+			)
 			if err != nil {
 				logger.Error("failed to find latest tag", "error", err)
 				return err
@@ -252,7 +280,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			}
 
 			// List commits since tag
+			t1 := time.Now()
 			commits, err := gitClient.ListCommitsSinceTag(latestTag)
+			logger.Debug("ListCommitsSinceTag",
+				"duration_ms", time.Since(t1).Milliseconds(),
+				"count", len(commits),
+			)
 			if err != nil {
 				logger.Error("failed to list commits", "error", err)
 				return err
@@ -318,6 +351,17 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				"from", semver.FormatTagWithPrefix(currentVersion, cfg.TagPrefix),
 				"to", semver.FormatTagWithPrefix(nextVersion, cfg.TagPrefix),
 			)
+
+			// M5: Short-circuit if no bump-worthy commits — nothing to release
+			if bump == semver.BumpNone {
+				logger.Info("no release: no bump-worthy commits",
+					"total_commits", len(parsedCommits),
+					"feat", countByType(parsedCommits, conventional.TypeFeat),
+					"fix", countByType(parsedCommits, conventional.TypeFix),
+					"chore", countByType(parsedCommits, conventional.TypeChore),
+				)
+				return outputReleaseFields(ghEnv.Output, currentVersion, cfg.TagPrefix, false)
+			}
 
 			// Step 9: Format version tag with configured prefix
 			versionTag := semver.FormatTagWithPrefix(nextVersion, cfg.TagPrefix)
@@ -416,6 +460,8 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				releaseNotes := generateReleaseNotes(parsedCommits, notesPRMap)
 				tagMessage := fmt.Sprintf("Release %s\n\n%s", versionTag, releaseNotes)
 
+				logger.Info("proceeding with full release", "tag", versionTag)
+
 				// 1. Create local annotated tag
 				tag, err := gitClient.CreateAnnotatedTag(versionTag, tagMessage)
 				if err != nil {
@@ -435,7 +481,13 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				}
 				err = gitClient.PushTag(ctx, versionTag, auth)
 				if err != nil {
-					logger.Error("failed to push tag", "error", err)
+					logger.Error("failed to push tag",
+						"tag", versionTag,
+						"remote", "origin",
+						"auth_user", auth.Username,
+						"token_present", ghEnv.Token != "",
+						"error", err,
+					)
 					return err
 				}
 				// Log 6: tag pushed
@@ -514,6 +566,12 @@ func cmdNotify(gitClient GitClient, githubClient GitHubClient, logger *slog.Logg
 			cfg := conventional.DefaultConfig()
 			if cfgLoaded != nil {
 				cfg = *cfgLoaded
+				logger.Debug("loaded .semrelrc.yml",
+					"path", filepath.Join(wd, ".semrelrc.yml"),
+					"tag_prefix", cfg.TagPrefix,
+					"release_branches", cfg.ReleaseBranches,
+					"initial_version", cfg.InitialVersion,
+				)
 			}
 			_ = cfg // TagPrefix reserved for future filtering
 
@@ -551,10 +609,12 @@ func cmdNotify(gitClient GitClient, githubClient GitHubClient, logger *slog.Logg
 
 			// Collect unique PRs across all commits
 			prMap := make(map[int]github.PR)
+			apiErrors := 0
 			for _, commit := range commits {
 				prs, err := githubClient.ListPRsForCommit(ctx, owner, repo, commit.SHA)
 				if err != nil {
 					logger.Warn("failed to list PRs for commit", "sha", commit.ShortSHA, "error", err)
+					apiErrors++
 					continue
 				}
 				for _, pr := range prs {
@@ -563,7 +623,12 @@ func cmdNotify(gitClient GitClient, githubClient GitHubClient, logger *slog.Logg
 			}
 
 			if len(prMap) == 0 {
-				logger.Info("no PRs found for release", "tag", semrelTag)
+				if apiErrors > 0 && apiErrors == len(commits) {
+					logger.Warn("no PRs notified — all PR lookups failed",
+						"api_errors", apiErrors, "commits_checked", len(commits))
+				} else {
+					logger.Info("no PRs associated with release", "tag", semrelTag)
+				}
 				return nil
 			}
 
@@ -572,6 +637,7 @@ func cmdNotify(gitClient GitClient, githubClient GitHubClient, logger *slog.Logg
 			body := fmt.Sprintf("%s\n🎉 This pull request has been included in release [%s](%s).",
 				marker, semrelTag, releaseURL)
 
+			notified := 0
 			for _, pr := range prMap {
 				found, err := githubClient.FindPRComment(ctx, owner, repo, pr.Number, marker)
 				if err != nil {
@@ -587,7 +653,9 @@ func cmdNotify(gitClient GitClient, githubClient GitHubClient, logger *slog.Logg
 					return err
 				}
 				logger.Info("posted release comment", "pr", pr.Number, "tag", semrelTag)
+				notified++
 			}
+			logger.Info("notification complete", "prs_notified", notified, "tag", semrelTag)
 
 			return nil
 		},
@@ -615,6 +683,12 @@ func cmdNotes(gitClient GitClient, githubClient GitHubClient, logger *slog.Logge
 			notesCfgResolved := conventional.DefaultConfig()
 			if notesCfg != nil {
 				notesCfgResolved = *notesCfg
+				logger.Debug("loaded .semrelrc.yml",
+					"path", filepath.Join(wd, ".semrelrc.yml"),
+					"tag_prefix", notesCfgResolved.TagPrefix,
+					"release_branches", notesCfgResolved.ReleaseBranches,
+					"initial_version", notesCfgResolved.InitialVersion,
+				)
 			}
 
 			// Load environment

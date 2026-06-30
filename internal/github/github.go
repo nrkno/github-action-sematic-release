@@ -50,27 +50,34 @@ type CreateReleaseOptions struct {
 	Body    string
 }
 
-// NewClient creates a new GitHub API client.
-// token: GitHub token for authentication
-// baseURL: API base URL (e.g., "https://api.github.com/"). If empty, uses GitHub public API.
-func NewClient(token, baseURL string) *Client {
-	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	httpClient := oauth2.NewClient(ctx, ts)
+// NewClient constructs a GitHub API client.
+// baseURL is the value of GITHUB_API_URL (may be empty or without trailing slash).
+// For the default GitHub.com API URL, the standard client is returned.
+// For any other non-empty URL (GHES), WithEnterpriseURLs is used.
+// A trailing slash is added automatically — go-github v60 requires it.
+func NewClient(token, baseURL string) (*Client, error) {
+	httpClient := oauth2.NewClient(context.Background(),
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
 
 	var ghClient *gogithub.Client
+
 	if baseURL != "" {
-		var err error
-		ghClient, err = gogithub.NewClient(httpClient).WithEnterpriseURLs(baseURL, baseURL)
-		if err != nil {
-			// If enterprise URL setup fails, fall back to default
-			ghClient = gogithub.NewClient(httpClient)
+		if !strings.HasSuffix(baseURL, "/") {
+			baseURL += "/"
 		}
-	} else {
+		const ghDefault = "https://api.github.com/"
+		if baseURL != ghDefault {
+			var err error
+			ghClient, err = gogithub.NewClient(httpClient).WithEnterpriseURLs(baseURL, baseURL)
+			if err != nil {
+				return nil, fmt.Errorf("invalid enterprise GitHub URL %q: %w", baseURL, err)
+			}
+		}
+	}
+	if ghClient == nil {
 		ghClient = gogithub.NewClient(httpClient)
 	}
-
-	return &Client{client: ghClient}
+	return &Client{client: ghClient}, nil
 }
 
 // GetReleaseByTag retrieves a release by tag name.
@@ -223,6 +230,7 @@ func (c *Client) FindPRComment(ctx context.Context, owner, repo string, prNumber
 }
 
 // mapHTTPError converts HTTP status codes and errors to typed errors.
+// The response body (up to 4096 bytes) is embedded in the error when non-empty.
 func mapHTTPError(resp *http.Response, err error) error {
 	if resp == nil {
 		// Network or other error
@@ -232,21 +240,49 @@ func mapHTTPError(resp *http.Response, err error) error {
 		return ErrServerError
 	}
 
+	var bodyStr string
+	if resp.Body != nil {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		bodyStr = strings.TrimSpace(string(data))
+	}
+
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
+		if bodyStr != "" {
+			return fmt.Errorf("%w: %s", ErrUnauthorized, bodyStr)
+		}
 		return ErrUnauthorized
 	case http.StatusForbidden:
+		if bodyStr != "" {
+			return fmt.Errorf("%w: %s", ErrForbidden, bodyStr)
+		}
 		return ErrForbidden
 	case http.StatusNotFound:
+		if bodyStr != "" {
+			return fmt.Errorf("%w: %s", ErrNotFound, bodyStr)
+		}
 		return ErrNotFound
 	case http.StatusUnprocessableEntity:
+		if bodyStr != "" {
+			return fmt.Errorf("%w: %s", ErrUnprocessable, bodyStr)
+		}
 		return ErrUnprocessable
 	case http.StatusTooManyRequests:
+		if bodyStr != "" {
+			return fmt.Errorf("%w: %s", ErrRateLimited, bodyStr)
+		}
 		return ErrRateLimited
 	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		if bodyStr != "" {
+			return fmt.Errorf("%w: %s", ErrServerError, bodyStr)
+		}
 		return ErrServerError
 	default:
 		if resp.StatusCode >= 500 {
+			if bodyStr != "" {
+				return fmt.Errorf("%w: %s", ErrServerError, bodyStr)
+			}
 			return ErrServerError
 		}
 		if err != nil {

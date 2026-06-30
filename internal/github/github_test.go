@@ -3,36 +3,64 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewClient(t *testing.T) {
 	t.Run("with empty baseURL", func(t *testing.T) {
-		client := NewClient("test-token", "")
+		client, err := NewClient("test-token", "")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		if client == nil || client.client == nil {
 			t.Fatal("expected non-nil client")
 		}
 	})
 
 	t.Run("with custom baseURL", func(t *testing.T) {
-		client := NewClient("test-token", "https://github.example.com/api/v3/")
+		client, err := NewClient("test-token", "https://github.example.com/api/v3/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		if client == nil || client.client == nil {
 			t.Fatal("expected non-nil client")
 		}
 	})
 }
 
+func TestNewClient_DefaultGitHub(t *testing.T) {
+	c, err := NewClient("token", "https://api.github.com")
+	require.NoError(t, err)
+	require.NotNil(t, c)
+}
+
+func TestNewClient_GHES(t *testing.T) {
+	c, err := NewClient("token", "https://ghe.corp.example.com/api/v3")
+	require.NoError(t, err)
+	require.NotNil(t, c)
+}
+
+func TestNewClient_InvalidURL(t *testing.T) {
+	c, err := NewClient("token", "://bad")
+	require.Error(t, err)
+	require.Nil(t, c)
+	require.Contains(t, err.Error(), "invalid enterprise GitHub URL")
+}
+
 func TestGetReleaseByTag(t *testing.T) {
 	tests := []struct {
-		name           string
-		status         int
-		responseBody   interface{}
-		expectedError  error
+		name            string
+		status          int
+		responseBody    interface{}
+		expectedError   error
 		expectedRelease *Release
 	}{
 		{
@@ -99,11 +127,14 @@ func TestGetReleaseByTag(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := NewClient("test-token", server.URL+"/")
+			client, err := NewClient("test-token", server.URL+"/")
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
 			rel, err := client.GetReleaseByTag(context.Background(), "owner", "repo", "v1.0.0")
 
 			if tt.expectedError != nil {
-				if err != tt.expectedError {
+				if !errors.Is(err, tt.expectedError) {
 					t.Errorf("expected error %v, got %v", tt.expectedError, err)
 				}
 				if rel != nil {
@@ -147,7 +178,10 @@ func TestCreateRelease(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		rel, err := client.CreateRelease(context.Background(), "owner", "repo", CreateReleaseOptions{
 			TagName: "v2.0.0",
 			Body:    "New release",
@@ -192,7 +226,10 @@ func TestCreateRelease(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		rel, err := client.CreateRelease(context.Background(), "owner", "repo", CreateReleaseOptions{
 			TagName: "v3.0.0",
 			Body:    "New release",
@@ -224,13 +261,16 @@ func TestCreateRelease(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		rel, err := client.CreateRelease(context.Background(), "owner", "repo", CreateReleaseOptions{
 			TagName: "v4.0.0",
 			Body:    "New release",
 		})
 
-		if err != ErrUnprocessable {
+		if !errors.Is(err, ErrUnprocessable) {
 			t.Errorf("expected ErrUnprocessable, got %v", err)
 		}
 		if rel != nil {
@@ -259,7 +299,10 @@ func TestListPRsForCommit(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		prs, err := client.ListPRsForCommit(context.Background(), "owner", "repo", "abc123")
 
 		if err != nil {
@@ -280,7 +323,10 @@ func TestListPRsForCommit(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		prs, err := client.ListPRsForCommit(context.Background(), "owner", "repo", "abc123")
 
 		if err != nil {
@@ -325,7 +371,10 @@ func TestListPRsForCommit(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		prs, err := client.ListPRsForCommit(context.Background(), "owner", "repo", "abc123")
 
 		if err != nil {
@@ -345,10 +394,13 @@ func TestListPRsForCommit(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		prs, err := client.ListPRsForCommit(context.Background(), "owner", "repo", "abc123")
 
-		if err != ErrNotFound {
+		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 		if prs != nil {
@@ -379,7 +431,10 @@ func TestSearchPRsForCommit(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		prs, err := client.SearchPRsForCommit(context.Background(), "is:pr repo:owner/repo")
 
 		if err != nil {
@@ -400,7 +455,10 @@ func TestSearchPRsForCommit(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		prs, err := client.SearchPRsForCommit(context.Background(), "is:pr repo:owner/repo")
 
 		if err != nil {
@@ -421,10 +479,13 @@ func TestSearchPRsForCommit(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		prs, err := client.SearchPRsForCommit(context.Background(), "is:pr repo:owner/repo")
 
-		if err != ErrUnauthorized {
+		if !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("expected ErrUnauthorized, got %v", err)
 		}
 		if prs != nil {
@@ -445,8 +506,11 @@ func TestPostPRComment(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
-		err := client.PostPRComment(context.Background(), "owner", "repo", 1, "Test comment")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		err = client.PostPRComment(context.Background(), "owner", "repo", 1, "Test comment")
 
 		if err != nil {
 			t.Fatalf("expected nil error, got %v", err)
@@ -460,10 +524,13 @@ func TestPostPRComment(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
-		err := client.PostPRComment(context.Background(), "owner", "repo", 999, "Test comment")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		err = client.PostPRComment(context.Background(), "owner", "repo", 999, "Test comment")
 
-		if err != ErrNotFound {
+		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
@@ -475,10 +542,13 @@ func TestPostPRComment(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
-		err := client.PostPRComment(context.Background(), "owner", "repo", 1, "Test comment")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
+		err = client.PostPRComment(context.Background(), "owner", "repo", 1, "Test comment")
 
-		if err != ErrForbidden {
+		if !errors.Is(err, ErrForbidden) {
 			t.Errorf("expected ErrForbidden, got %v", err)
 		}
 	})
@@ -502,7 +572,10 @@ func TestFindPRComment(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		found, err := client.FindPRComment(context.Background(), "owner", "repo", 1, "<!-- semrel-notify:v1.0.0 -->")
 
 		if err != nil {
@@ -530,7 +603,10 @@ func TestFindPRComment(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		found, err := client.FindPRComment(context.Background(), "owner", "repo", 1, "<!-- semrel-notify:v1.0.0 -->")
 
 		if err != nil {
@@ -570,7 +646,10 @@ func TestFindPRComment(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		found, err := client.FindPRComment(context.Background(), "owner", "repo", 1, "<!-- marker -->")
 
 		if err != nil {
@@ -591,10 +670,13 @@ func TestFindPRComment(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewClient("test-token", server.URL+"/")
+		client, err := NewClient("test-token", server.URL+"/")
+		if err != nil {
+			t.Fatalf("NewClient: %v", err)
+		}
 		found, err := client.FindPRComment(context.Background(), "owner", "repo", 999, "<!-- marker -->")
 
-		if err != ErrNotFound {
+		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 		if found {
@@ -610,28 +692,28 @@ func TestIsAlreadyExists(t *testing.T) {
 		expected bool
 	}{
 		{
-			name: "already_exists error",
-			body: `{"errors":[{"code":"already_exists"}]}`,
+			name:     "already_exists error",
+			body:     `{"errors":[{"code":"already_exists"}]}`,
 			expected: true,
 		},
 		{
-			name: "validation_failed error",
-			body: `{"errors":[{"code":"validation_failed"}]}`,
+			name:     "validation_failed error",
+			body:     `{"errors":[{"code":"validation_failed"}]}`,
 			expected: false,
 		},
 		{
-			name: "multiple errors with already_exists",
-			body: `{"errors":[{"code":"validation_failed"},{"code":"already_exists"}]}`,
+			name:     "multiple errors with already_exists",
+			body:     `{"errors":[{"code":"validation_failed"},{"code":"already_exists"}]}`,
 			expected: true,
 		},
 		{
-			name: "empty errors",
-			body: `{"errors":[]}`,
+			name:     "empty errors",
+			body:     `{"errors":[]}`,
 			expected: false,
 		},
 		{
-			name: "invalid JSON",
-			body: `{invalid}`,
+			name:     "invalid JSON",
+			body:     `{invalid}`,
 			expected: false,
 		},
 	}

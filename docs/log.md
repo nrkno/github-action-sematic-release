@@ -10,6 +10,11 @@ timestamp: 2026-06-30
 
 ### 2026-06-30
 
+- **Update** `docs/configuration.md` — renamed semrel-specific section to cover all subcommands; added `SEMREL_LOG_LEVEL` row (scope=all subcommands) documenting DEBUG/INFO/WARN/ERROR log verbosity control via environment variable
+- **Update** `docs/api-reference.md` — updated `semrel lint` exit code 1 to describe structured `slog.Error` per-commit violations with `sha`/`rule`/`message`/`example` fields; added `"no release: no bump-worthy commits"` (INFO) and `"proceeding with full release"` (INFO) rows to `semrel release` log output table; added shallow-clone detection note under `semrel release` exit codes documenting immediate code-2 exit with `level=ERROR` and `fix` field
+
+### 2026-06-30
+
 - **Update** `README.md` — replaced digest-pinning paragraph in Security section with cosign keyless verification as the supply-chain integrity mechanism; updated recommendation to pin to release tag or commit SHA rather than `@main`
 - **Update** `docs/architecture.md` — replaced "Two-layer pinning" section with updated Security Model explaining why digest pinning was dropped (GITHUB_TOKEN cannot push to branch-protected main); documented cosign keyless signatures as the container-layer verification mechanism; updated two-layer table to reflect tag + cosign instead of tag + digest; timestamp updated to 2026-06-30
 - **Update** `action.yml` — image reference updated from `v0.1.2@sha256:…` to `v0.3.0` (mutable version tag, no digest suffix)
