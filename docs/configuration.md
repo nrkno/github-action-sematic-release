@@ -61,16 +61,18 @@ directly as documented in the sections below.
 
 ---
 
-### semrel-specific (consumed by notify)
-
-These are set explicitly in the `notify.yml` workflow from the GitHub release event
-payload and passed to `semrel notify`:
+### semrel-specific
 
 | Variable | Scope | Description |
 | -------- | ----- | ----------- |
+| `SEMREL_LOG_LEVEL` | all subcommands | Log verbosity: `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive). Defaults to `INFO`. Set `DEBUG` to log binary version, config file fields, git operation timings, and PR lookup details. |
 | `SEMREL_TAG` | `notify` | Full tag name of the published release (e.g. `v1.3.0`). Required for `semrel notify`. Set from `${{ github.event.release.tag_name }}`. |
 | `SEMREL_RELEASE_URL` | `notify` | HTML URL of the published GitHub Release. Constructed from `GITHUB_SERVER_URL` + `GITHUB_REPOSITORY` + `SEMREL_TAG` if absent. |
 | `SEMREL_VERSION` | `notify` | Version string without `v` prefix (e.g., `1.2.3`). Optional; used for display only. |
+
+These `SEMREL_TAG`, `SEMREL_RELEASE_URL`, and `SEMREL_VERSION` variables are set
+explicitly in the `notify.yml` workflow from the GitHub release event payload and
+passed to `semrel notify`.
 
 ---
 

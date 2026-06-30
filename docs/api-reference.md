@@ -65,7 +65,7 @@ semrel lint [--from-ref <ref>] [--to-ref <ref>]
 | Code | Meaning |
 | ---- | ------- |
 | `0` | All commits in range are valid conventional commits. |
-| `1` | One or more commits violated the conventional commit format, **or** the `.semrelrc.yml` config file is present but malformed. Violations are printed to stderr, one per commit: `commit <short-sha>: <rule>\n  <raw message>\n  example: <example>`. |
+| `1` | One or more commits violated the conventional commit format, **or** the `.semrelrc.yml` config file is present but malformed. Violations are emitted as structured `slog.Error` lines to stderr, one per commit, with fields `sha`, `rule`, `message`, `example`. |
 | `2` | System error (e.g., shallow repository, git operation failed). |
 
 ### Stdout
@@ -114,6 +114,12 @@ semrel release [--dry-run]
 | `1` | Tag conflict: the computed tag already exists but points to a different commit SHA. This indicates a concurrent release run computed the same version. Re-run the workflow or investigate the tag. |
 | `2` | System error: shallow repository, missing `GITHUB_TOKEN`, invalid `GITHUB_REPOSITORY` format, or git operation failed. |
 
+> **Shallow clone detection**: when semrel detects a shallow repository at startup
+> (via `git rev-parse --is-shallow-repository`), it exits immediately with code 2
+> and emits a structured `level=ERROR` log line with a `fix` field set to
+> `"add fetch-depth: 0 to your actions/checkout step"`.  No further commands are
+> attempted.  Add `fetch-depth: 0` to your `actions/checkout` step to resolve this.
+
 ### GITHUB_OUTPUT fields
 
 Written on exit 0 in all cases (released or not):
@@ -143,6 +149,8 @@ narrative of the release in GitHub Actions logs:
 | After version computed | `msg=bump detected` | `type` (`major`/`minor`/`patch`/`none`), `from` previous tag, `to` next tag. |
 | Once per commit with an associated PR | `msg=PR in release` | `pr` (`#N`), `title`, `sha` (7-char). |
 | After identifying the highest-bump commit | `msg=release triggered by PR` | `pr` (`#N`), `title`, `url`. Falls back to `msg=release triggered by commit` with `sha` and `message` if no PR is found. |
+| When bump level is `none` (no releasable commits) | `msg=no release: no bump-worthy commits` | Fires before any idempotency check; `released=false` is written to `GITHUB_OUTPUT` and the command exits 0. |
+| Before Rung 3 tag creation | `msg=proceeding with full release` | Emitted once all idempotency checks pass and tag+push+release creation is about to start. |
 | After local annotated tag created (Rung 3) | `msg=created annotated tag` | `tag` name, `commit` 7-char SHA. |
 | After tag pushed to origin (Rung 3) | `msg=pushed tag to origin` | `tag` name. |
 | After GitHub Release created (Rung 2 or 3) | `msg=created GitHub release` | `tag` name, `url` GitHub Release HTML URL. |

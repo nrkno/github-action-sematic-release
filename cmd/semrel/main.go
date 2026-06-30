@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 
 	"github.com/nrkno/semrel/internal/cli"
 	"github.com/nrkno/semrel/internal/git"
@@ -18,16 +20,35 @@ var (
 )
 
 func main() {
-	// Setup logger (stderr)
+	// Setup logger (stderr) — level configurable via SEMREL_LOG_LEVEL
+	var level slog.LevelVar // zero value = INFO
+	if lvlStr := os.Getenv("SEMREL_LOG_LEVEL"); lvlStr != "" {
+		if err := level.UnmarshalText([]byte(lvlStr)); err != nil {
+			fmt.Fprintf(os.Stderr, "semrel: invalid SEMREL_LOG_LEVEL %q, defaulting to INFO\n", lvlStr)
+		}
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: &level,
 	}))
+	logger.Debug("semrel starting",
+		"version", version,
+		"commit", commit,
+		"built", date,
+		"go", runtime.Version(),
+	)
 
 	// Create clients - open git repo lazily in each command
 	ctx := context.Background()
 	var gitClient cli.GitClient
 	gitRepo, err := git.OpenRepo(".")
 	if err != nil {
+		var shallowErr git.ShallowRepoError
+		if errors.As(err, &shallowErr) {
+			logger.Error("repository is a shallow clone — semrel requires full git history",
+				"fix", "add 'fetch-depth: 0' to your actions/checkout step",
+			)
+			os.Exit(2)
+		}
 		// For help/version commands, we don't need the repo
 		// So we'll create a lazy client and let the command handle it
 		logger.Debug("git repo not available", "error", err)
@@ -36,7 +57,11 @@ func main() {
 		gitClient = gitRepo
 	}
 
-	githubClient := github.NewClient(os.Getenv("GITHUB_TOKEN"), "")
+	githubClient, err := github.NewClient(os.Getenv("GITHUB_TOKEN"), os.Getenv("GITHUB_API_URL"))
+	if err != nil {
+		logger.Error("failed to create GitHub client", "error", err)
+		os.Exit(1)
+	}
 
 	// Create and execute root command
 	root := cli.Root(gitClient, githubClient, logger)
