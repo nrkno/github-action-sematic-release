@@ -12,6 +12,7 @@ import (
 	"github.com/nrkno/semrel/internal/github"
 	"github.com/nrkno/semrel/internal/notes"
 	"github.com/nrkno/semrel/internal/semver"
+	"github.com/stretchr/testify/require"
 )
 
 // Helper to create test tags with unexported targetSHA field
@@ -23,22 +24,23 @@ func newTestTag(name, sha string) *git.Tag {
 		SHA:  sha,
 	}
 }
+
 type mockGitClient struct {
-	latestTag          *git.Tag
-	latestTagErr       error
-	findTagByNameTag   *git.Tag
-	findTagByNameErr   error
-	commits            []git.Commit
-	commitsErr         error
-	createdTag         *git.Tag
-	createTagErr       error
-	pushedTag          string
-	pushTagErr         error
-	isShallowRepo      bool
-	previousTag        *git.Tag
-	previousTagErr     error
-	commitsBetween     []git.Commit
-	commitsBetweenErr  error
+	latestTag         *git.Tag
+	latestTagErr      error
+	findTagByNameTag  *git.Tag
+	findTagByNameErr  error
+	commits           []git.Commit
+	commitsErr        error
+	createdTag        *git.Tag
+	createTagErr      error
+	pushedTag         string
+	pushTagErr        error
+	isShallowRepo     bool
+	previousTag       *git.Tag
+	previousTagErr    error
+	commitsBetween    []git.Commit
+	commitsBetweenErr error
 }
 
 func (m *mockGitClient) FindLatestAnnotatedTag(tagPrefix string) (*git.Tag, error) {
@@ -1127,4 +1129,35 @@ func TestCmdRelease_InvalidInitialVersion(t *testing.T) {
 	if gitClient.latestTag != nil || gitClient.pushedTag != "" {
 		t.Error("no git I/O should happen when initial-version is invalid")
 	}
+}
+
+// TestRelease_BumpNone_NoRelease verifies that when latestTag != nil and all commits
+// are chore-only (bump=BumpNone), the short-circuit fires, no tag is created,
+// and released=false is written to GITHUB_OUTPUT.
+func TestRelease_BumpNone_NoRelease(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	outFile, err := os.CreateTemp(t.TempDir(), "gh-output")
+	require.NoError(t, err)
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: git.NewTag("v1.2.3", "abc1234abc1234abc1234abc1234abc1234abc1234", "abc1234abc1234abc1234abc1234abc1234abc1234"),
+		commits:   []git.Commit{{SHA: "aabbccdd", ShortSHA: "aabbccd", Message: "chore: update deps"}},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound, // no release exists
+	}
+
+	root := Root(gitClient, githubClient, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	root.SetArgs([]string{"release"})
+	err = root.ExecuteContext(context.Background())
+	require.NoError(t, err, "BumpNone short-circuit should return nil")
+
+	// No tag should have been created
+	require.Nil(t, gitClient.createdTag, "no tag should be created for BumpNone")
+
+	// GITHUB_OUTPUT should contain released=false
+	content, err := os.ReadFile(outFile.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(content), "released=false")
 }

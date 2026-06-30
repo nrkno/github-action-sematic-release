@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/nrkno/semrel/internal/conventional"
 	"github.com/nrkno/semrel/internal/env"
 	"github.com/nrkno/semrel/internal/git"
@@ -18,6 +17,7 @@ import (
 	"github.com/nrkno/semrel/internal/notes"
 	"github.com/nrkno/semrel/internal/output"
 	"github.com/nrkno/semrel/internal/semver"
+	"github.com/spf13/cobra"
 )
 
 // Interface injection for testing
@@ -264,14 +264,14 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			// Step 4: Find latest tag using configured prefix
 			t0 := time.Now()
 			latestTag, err := gitClient.FindLatestAnnotatedTag(cfg.TagPrefix)
-			logger.Debug("FindLatestAnnotatedTag",
-				"duration_ms", time.Since(t0).Milliseconds(),
-				"found", latestTag != nil,
-			)
 			if err != nil {
 				logger.Error("failed to find latest tag", "error", err)
 				return err
 			}
+			logger.Debug("FindLatestAnnotatedTag",
+				"duration_ms", time.Since(t0).Milliseconds(),
+				"found", latestTag != nil,
+			)
 			if latestTag != nil && !latestTag.IsAnnotated {
 				logger.Warn("latest tag is a lightweight tag — semrel works best with annotated tags. "+
 					"The next release will create an annotated tag going forward. "+
@@ -282,14 +282,14 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			// List commits since tag
 			t1 := time.Now()
 			commits, err := gitClient.ListCommitsSinceTag(latestTag)
-			logger.Debug("ListCommitsSinceTag",
-				"duration_ms", time.Since(t1).Milliseconds(),
-				"count", len(commits),
-			)
 			if err != nil {
 				logger.Error("failed to list commits", "error", err)
 				return err
 			}
+			logger.Debug("ListCommitsSinceTag",
+				"duration_ms", time.Since(t1).Milliseconds(),
+				"count", len(commits),
+			)
 
 			// Parse commits
 			var parsedCommits []conventional.Commit
@@ -331,6 +331,19 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				// Step 7: Bootstrap using configured InitialVersion
 				baseVersion, _ := semver.ParseVersion(cfg.InitialVersion) // safe: validated above
 				nextVersion = semver.NextVersion(baseVersion, bump)
+				currentVersion = baseVersion // set before BumpNone check so output is correct
+
+				if bump == semver.BumpNone {
+					logger.Info("no release: no bump-worthy commits",
+						"total_commits", len(parsedCommits),
+						"feat", countByType(parsedCommits, conventional.TypeFeat),
+						"fix", countByType(parsedCommits, conventional.TypeFix),
+						"chore", countByType(parsedCommits, conventional.TypeChore),
+					)
+					return outputReleaseFields(ghEnv.Output, currentVersion, cfg.TagPrefix, false)
+				}
+
+				// Only log "bootstrapping" when we are actually about to create a release
 				logger.Info("no prior annotated tags found — bootstrapping version",
 					"initial-version", cfg.InitialVersion,
 					"version", semver.FormatTagWithPrefix(nextVersion, cfg.TagPrefix),
@@ -343,25 +356,24 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 					return err
 				}
 				nextVersion = semver.NextVersion(currentVersion, bump)
+
+				if bump == semver.BumpNone {
+					logger.Info("no release: no bump-worthy commits",
+						"total_commits", len(parsedCommits),
+						"feat", countByType(parsedCommits, conventional.TypeFeat),
+						"fix", countByType(parsedCommits, conventional.TypeFix),
+						"chore", countByType(parsedCommits, conventional.TypeChore),
+					)
+					return outputReleaseFields(ghEnv.Output, currentVersion, cfg.TagPrefix, false)
+				}
 			}
 
-			// Log 2: bump detected
+			// Log 2: bump detected (only reached when bump != BumpNone)
 			logger.Info("bump detected",
 				"type", bump.String(),
 				"from", semver.FormatTagWithPrefix(currentVersion, cfg.TagPrefix),
 				"to", semver.FormatTagWithPrefix(nextVersion, cfg.TagPrefix),
 			)
-
-			// M5: Short-circuit if no bump-worthy commits — nothing to release
-			if bump == semver.BumpNone {
-				logger.Info("no release: no bump-worthy commits",
-					"total_commits", len(parsedCommits),
-					"feat", countByType(parsedCommits, conventional.TypeFeat),
-					"fix", countByType(parsedCommits, conventional.TypeFix),
-					"chore", countByType(parsedCommits, conventional.TypeChore),
-				)
-				return outputReleaseFields(ghEnv.Output, currentVersion, cfg.TagPrefix, false)
-			}
 
 			// Step 9: Format version tag with configured prefix
 			versionTag := semver.FormatTagWithPrefix(nextVersion, cfg.TagPrefix)
@@ -431,13 +443,13 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				// Tag already at HEAD — just create the GitHub release (idempotent retry)
 				if !dryRun {
 					releaseNotes := generateReleaseNotes(parsedCommits, notesPRMap)
-				release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
-					TagName: versionTag,
-					Name:    versionTag,
-					Body:    releaseNotes,
-				})
-				if err != nil {
-					logger.Error("failed to create release for existing tag", "error", err)
+					release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
+						TagName: versionTag,
+						Name:    versionTag,
+						Body:    releaseNotes,
+					})
+					if err != nil {
+						logger.Error("failed to create release for existing tag", "error", err)
 						return err
 					}
 					// Log 7: GitHub release created
@@ -493,12 +505,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				// Log 6: tag pushed
 				logger.Info("pushed tag to origin", "tag", versionTag)
 
-			// 3. Create release — tag now exists on remote as annotated
-			release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
-				TagName: versionTag,
-				Name:    versionTag,
-				Body:    releaseNotes,
-			})
+				// 3. Create release — tag now exists on remote as annotated
+				release, err := githubClient.CreateRelease(ctx, owner, repo, github.CreateReleaseOptions{
+					TagName: versionTag,
+					Name:    versionTag,
+					Body:    releaseNotes,
+				})
 				if err != nil {
 					logger.Error("failed to create release", "error", err)
 					return err
@@ -625,6 +637,9 @@ func cmdNotify(gitClient GitClient, githubClient GitHubClient, logger *slog.Logg
 			if len(prMap) == 0 {
 				if apiErrors > 0 && apiErrors == len(commits) {
 					logger.Warn("no PRs notified — all PR lookups failed",
+						"api_errors", apiErrors, "commits_checked", len(commits))
+				} else if apiErrors > 0 {
+					logger.Warn("no PRs associated with release — partial lookup failures",
 						"api_errors", apiErrors, "commits_checked", len(commits))
 				} else {
 					logger.Info("no PRs associated with release", "tag", semrelTag)
