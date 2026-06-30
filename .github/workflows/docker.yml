@@ -15,13 +15,20 @@ permissions:
   contents: write
   packages: write
   id-token: write
-  pull-requests: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Get tag commit SHA
+        id: sha
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -38,7 +45,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=${{ inputs.tag || github.ref_name }}
-            type=sha,prefix=sha-,format=short
+            type=raw,value=${{ steps.sha.outputs.commit }}
 
       - name: Build date
         id: builddate
@@ -64,22 +71,3 @@ jobs:
 
       - name: Sign image
         run: cosign sign --yes ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
-
-      - name: Update action.yml and open PR
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          BRANCH="chore/update-action-image-${TAG}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "${BRANCH}"
-          sed -i "s|image: docker://.*|image: docker://ghcr.io/${{ github.repository }}:${TAG}|" action.yml
-          git add action.yml
-          git commit -m "chore(release): update action image to ${TAG}"
-          git push origin "${BRANCH}"
-          gh pr create \
-            --base main \
-            --head "${BRANCH}" \
-            --title "chore(release): update action image to ${TAG}" \
-            --body "Automated PR to update \`action.yml\` with the Docker image published for ${TAG}."
