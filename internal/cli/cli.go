@@ -381,13 +381,24 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			// Fetch PRs for all commits in this release (used in logs 3/4 and release notes)
 			prMap := fetchPRsForCommits(ctx, githubClient, owner, repo, parsedCommits, logger)
 
-			// Log 3: PRs included in the release
+			// Log 3: PRs included in the release — one line per unique PR
 			if len(prMap) > 0 {
-				for sha, pr := range prMap {
+				type prEntry struct {
+					pr          github.PR
+					commitCount int
+				}
+				uniquePRs := make(map[int]prEntry)
+				for _, pr := range prMap {
+					e := uniquePRs[pr.Number]
+					e.pr = pr
+					e.commitCount++
+					uniquePRs[pr.Number] = e
+				}
+				for _, e := range uniquePRs {
 					logger.Info("PR in release",
-						"pr", fmt.Sprintf("#%d", pr.Number),
-						"title", pr.Title,
-						"sha", sha[:7],
+						"pr", fmt.Sprintf("#%d", e.pr.Number),
+						"title", e.pr.Title,
+						"commits", e.commitCount,
 					)
 				}
 			}
@@ -820,6 +831,10 @@ func fetchPRsForCommits(ctx context.Context, gh GitHubClient, owner, repo string
 		}
 		if len(prs) > 0 {
 			prMap[commit.SHA] = prs[0]
+			logger.Debug("commit associated with PR",
+				"sha", commit.ShortSHA,
+				"pr", fmt.Sprintf("#%d", prs[0].Number),
+			)
 		}
 	}
 	return prMap
