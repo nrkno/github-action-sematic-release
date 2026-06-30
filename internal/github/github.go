@@ -15,12 +15,12 @@ import (
 
 // Typed errors for GitHub API responses.
 var (
-	ErrUnauthorized   = errors.New("unauthorized: GITHUB_TOKEN is missing or expired")
-	ErrForbidden      = errors.New("forbidden: GITHUB_TOKEN lacks required permissions")
-	ErrNotFound       = errors.New("not found: resource does not exist")
-	ErrUnprocessable  = errors.New("unprocessable: GitHub API rejected request")
-	ErrRateLimited    = errors.New("rate limited: GitHub API rate limit exceeded")
-	ErrServerError    = errors.New("server error: GitHub API returned 5xx")
+	ErrUnauthorized  = errors.New("unauthorized: GITHUB_TOKEN is missing or expired")
+	ErrForbidden     = errors.New("forbidden: GITHUB_TOKEN lacks required permissions")
+	ErrNotFound      = errors.New("not found: resource does not exist")
+	ErrUnprocessable = errors.New("unprocessable: GitHub API rejected request")
+	ErrRateLimited   = errors.New("rate limited: GitHub API rate limit exceeded")
+	ErrServerError   = errors.New("server error: GitHub API returned 5xx")
 )
 
 // Client wraps the go-github client.
