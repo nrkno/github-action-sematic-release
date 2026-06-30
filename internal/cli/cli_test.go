@@ -1136,6 +1136,7 @@ func TestCmdRelease_InvalidInitialVersion(t *testing.T) {
 // and released=false is written to GITHUB_OUTPUT.
 func TestRelease_BumpNone_NoRelease(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "main") // branch guard must pass so BumpNone short-circuit is exercised
 	outFile, err := os.CreateTemp(t.TempDir(), "gh-output")
 	require.NoError(t, err)
 	t.Setenv("GITHUB_OUTPUT", outFile.Name())

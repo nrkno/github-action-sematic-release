@@ -286,7 +286,13 @@ func mapHTTPError(resp *http.Response, err error) error {
 			return ErrServerError
 		}
 		if err != nil {
+			if bodyStr != "" {
+				return fmt.Errorf("github api error (status %d): %w: %s", resp.StatusCode, err, bodyStr)
+			}
 			return fmt.Errorf("github api error: %w", err)
+		}
+		if bodyStr != "" {
+			return fmt.Errorf("github api error: status %d: %s", resp.StatusCode, bodyStr)
 		}
 		return fmt.Errorf("github api error: status %d", resp.StatusCode)
 	}
