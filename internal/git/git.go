@@ -25,11 +25,12 @@ type Commit struct {
 	Message  string
 }
 
-// Tag represents an annotated git tag
+// Tag represents a git tag (annotated or lightweight).
 type Tag struct {
-	Name      string // tag name (e.g., "v1.0.0")
-	SHA       string // tag object SHA (for annotated tags)
-	targetSHA string // commit SHA that this tag points to (cached)
+	Name        string // tag name (e.g., "v1.0.0")
+	SHA         string // tag object SHA (annotated) or commit SHA (lightweight)
+	targetSHA   string // commit SHA that this tag points to
+	IsAnnotated bool   // true = annotated tag object; false = lightweight tag
 }
 
 // TargetSHA returns the commit SHA that this tag points to (distinct from tag object SHA)
@@ -40,9 +41,10 @@ func (t *Tag) TargetSHA() string {
 // NewTag constructs a Tag with all fields set. Intended for use in tests.
 func NewTag(name, sha, targetSHA string) *Tag {
 	return &Tag{
-		Name:      name,
-		SHA:       sha,
-		targetSHA: targetSHA,
+		Name:        name,
+		SHA:         sha,
+		targetSHA:   targetSHA,
+		IsAnnotated: false,
 	}
 }
 
@@ -91,7 +93,9 @@ func OpenRepo(path string) (*Repository, error) {
 
 // FindLatestAnnotatedTag finds the latest annotated tag in the repository.
 // If tagPrefix is non-empty, only tags with that prefix are considered.
-// Returns nil, nil if no matching annotated tags exist (bootstrap case).
+// If no annotated tags exist, falls back to the most recent lightweight tag
+// (for repos migrating from tools like codfish/semantic-release that create
+// lightweight tags). Returns nil, nil only when no matching tags of any kind exist.
 func (r *Repository) FindLatestAnnotatedTag(tagPrefix string) (*Tag, error) {
 	tags, err := r.raw.Tags()
 	if err != nil {
@@ -116,9 +120,10 @@ func (r *Repository) FindLatestAnnotatedTag(tagPrefix string) (*Tag, error) {
 		targetSHA := obj.Target.String()
 
 		tag := &Tag{
-			Name:      name,
-			SHA:       obj.Hash.String(),
-			targetSHA: targetSHA,
+			Name:        name,
+			SHA:         obj.Hash.String(),
+			targetSHA:   targetSHA,
+			IsAnnotated: true,
 		}
 		annotatedTags = append(annotatedTags, tag)
 		return nil
@@ -127,23 +132,76 @@ func (r *Repository) FindLatestAnnotatedTag(tagPrefix string) (*Tag, error) {
 		return nil, fmt.Errorf("failed to iterate tags: %w", err)
 	}
 
-	if len(annotatedTags) == 0 {
-		return nil, nil
+	if len(annotatedTags) > 0 {
+		// Sort by target commit date (most recent first)
+		sort.Slice(annotatedTags, func(i, j int) bool {
+			commitI, errI := r.raw.CommitObject(plumbing.NewHash(annotatedTags[i].targetSHA))
+			commitJ, errJ := r.raw.CommitObject(plumbing.NewHash(annotatedTags[j].targetSHA))
+			if errI != nil || errJ != nil {
+				return false
+			}
+			return commitI.Author.When.After(commitJ.Author.When)
+		})
+		return annotatedTags[0], nil
 	}
 
-	// Sort by target commit date (most recent first)
-	sort.Slice(annotatedTags, func(i, j int) bool {
-		// Get the commit objects to compare dates
-		commitI, errI := r.raw.CommitObject(plumbing.NewHash(annotatedTags[i].targetSHA))
-		commitJ, errJ := r.raw.CommitObject(plumbing.NewHash(annotatedTags[j].targetSHA))
-		if errI != nil || errJ != nil {
-			// Fallback: keep original order if we can't get commits
-			return false
-		}
-		return commitI.Author.When.After(commitJ.Author.When)
-	})
+	// No annotated tags found — fall back to lightweight tags.
+	// This handles repos migrating from tools (e.g. codfish/semantic-release)
+	// that create lightweight tags. The next release will create an annotated
+	// tag, migrating the repo forward automatically.
+	return r.findLatestLightweightTag(tagPrefix)
+}
 
-	return annotatedTags[0], nil
+// findLatestLightweightTag finds the most recent lightweight tag matching tagPrefix.
+// Used as fallback by FindLatestAnnotatedTag when no annotated tags exist.
+func (r *Repository) findLatestLightweightTag(tagPrefix string) (*Tag, error) {
+	iter, err := r.raw.Tags()
+	if err != nil {
+		return nil, fmt.Errorf("list tags: %w", err)
+	}
+
+	type tagWithTime struct {
+		tag  *Tag
+		when time.Time
+	}
+
+	var candidates []tagWithTime
+	err = iter.ForEach(func(ref *plumbing.Reference) error {
+		name := ref.Name().Short()
+		if tagPrefix != "" && !strings.HasPrefix(name, tagPrefix) {
+			return nil
+		}
+		// Skip annotated tags — they were already handled above
+		if _, err := r.raw.TagObject(ref.Hash()); err == nil {
+			return nil
+		}
+		// Must point directly to a commit
+		commit, err := r.raw.CommitObject(ref.Hash())
+		if err != nil {
+			return nil
+		}
+		candidates = append(candidates, tagWithTime{
+			tag: &Tag{
+				Name:        name,
+				SHA:         ref.Hash().String(),
+				targetSHA:   commit.Hash.String(),
+				IsAnnotated: false,
+			},
+			when: commit.Committer.When,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return nil, nil // genuinely no tags — real bootstrap
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].when.After(candidates[j].when)
+	})
+	return candidates[0].tag, nil
 }
 
 // FindPreviousAnnotatedTag finds the annotated tag before the given tag.
@@ -290,21 +348,34 @@ func (r *Repository) ListCommitsBetweenTags(from, to *Tag) ([]Commit, error) {
 	return commits, nil
 }
 
-// FindTagByName looks up a single annotated tag by name.
-// Returns (nil, nil) if the tag does not exist or is a lightweight tag.
+// FindTagByName looks up a tag by name.
+// Supports both annotated and lightweight tags.
+// Returns (nil, nil) if the tag does not exist.
 func (r *Repository) FindTagByName(name string) (*Tag, error) {
 	ref, err := r.raw.Tag(name)
 	if err != nil {
 		return nil, nil // tag does not exist
 	}
+	// Annotated tag: the ref points to a tag object
 	obj, err := r.raw.TagObject(ref.Hash())
+	if err == nil {
+		return &Tag{
+			Name:        name,
+			SHA:         obj.Hash.String(),
+			targetSHA:   obj.Target.String(),
+			IsAnnotated: true,
+		}, nil
+	}
+	// Lightweight tag: the ref points directly to a commit
+	commit, err := r.raw.CommitObject(ref.Hash())
 	if err != nil {
-		return nil, nil // lightweight tag — not an annotated tag object
+		return nil, nil // ref exists but is not a usable tag
 	}
 	return &Tag{
-		Name:      name,
-		SHA:       obj.Hash.String(),
-		targetSHA: obj.Target.String(),
+		Name:        name,
+		SHA:         ref.Hash().String(),
+		targetSHA:   commit.Hash.String(),
+		IsAnnotated: false,
 	}, nil
 }
 
@@ -342,9 +413,10 @@ func (r *Repository) CreateAnnotatedTag(name, message string) (*Tag, error) {
 	}
 
 	tag := &Tag{
-		Name:      name,
-		SHA:       tagObj.Hash.String(),
-		targetSHA: tagObj.Target.String(),
+		Name:        name,
+		SHA:         tagObj.Hash.String(),
+		targetSHA:   tagObj.Target.String(),
+		IsAnnotated: true,
 	}
 
 	return tag, nil

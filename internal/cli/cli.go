@@ -244,6 +244,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				logger.Error("failed to find latest tag", "error", err)
 				return err
 			}
+			if latestTag != nil && !latestTag.IsAnnotated {
+				logger.Warn("latest tag is a lightweight tag — semrel works best with annotated tags. "+
+					"The next release will create an annotated tag going forward. "+
+					"No action required, but consider running: git tag -a "+latestTag.Name+" <sha> -m 'migration' to convert.",
+					"tag", latestTag.Name)
+			}
 
 			// List commits since tag
 			commits, err := gitClient.ListCommitsSinceTag(latestTag)

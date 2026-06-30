@@ -145,6 +145,20 @@ func createAnnotatedTag(t *testing.T, repo *gogit.Repository, name, message stri
 	return tagObj
 }
 
+// createLightweightTag creates a lightweight tag pointing directly at HEAD.
+func createLightweightTag(t *testing.T, repo *gogit.Repository, name string) plumbing.Hash {
+	t.Helper()
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatalf("failed to get HEAD: %v", err)
+	}
+	lwRef := plumbing.NewHashReference(plumbing.NewTagReferenceName(name), head.Hash())
+	if err := repo.Storer.SetReference(lwRef); err != nil {
+		t.Fatalf("failed to create lightweight tag %q: %v", name, err)
+	}
+	return head.Hash()
+}
+
 // TestOpenRepo_BootstrapRepo tests opening a fresh repository
 func TestOpenRepo_BootstrapRepo(t *testing.T) {
 	repo := createInMemoryRepo(t)
@@ -685,5 +699,129 @@ func TestOpenRepo_ShallowRepoDetection_FileCheck(t *testing.T) {
 
 	if shallowErr.Message != "repository is a shallow clone" {
 		t.Errorf("expected message 'repository is a shallow clone', got '%s'", shallowErr.Message)
+	}
+}
+
+// TestFindLatestAnnotatedTag_FallsBackToLightweight verifies that when no annotated tags exist,
+// the most recent lightweight tag is returned with IsAnnotated=false.
+func TestFindLatestAnnotatedTag_FallsBackToLightweight(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+
+	// Commit 1 → lightweight tag v1.0.0
+	createCommitWithTime(t, repo, "file.txt", "content 1", "commit 1", now)
+	createLightweightTag(t, repo, "v1.0.0")
+
+	// Commit 2 → lightweight tag v1.1.0 (newer)
+	createCommitWithTime(t, repo, "file.txt", "content 2", "commit 2", now.Add(2*time.Second))
+	createLightweightTag(t, repo, "v1.1.0")
+
+	// Commit 3 → lightweight tag v1.2.0 (newest)
+	createCommitWithTime(t, repo, "file.txt", "content 3", "commit 3", now.Add(4*time.Second))
+	createLightweightTag(t, repo, "v1.2.0")
+
+	r := &Repository{raw: repo}
+	tag, err := r.FindLatestAnnotatedTag("")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tag == nil {
+		t.Fatal("expected lightweight tag fallback, got nil")
+	}
+	if tag.Name != "v1.2.0" {
+		t.Errorf("expected most recent lightweight tag 'v1.2.0', got %q", tag.Name)
+	}
+	if tag.IsAnnotated {
+		t.Errorf("expected IsAnnotated=false for lightweight tag, got true")
+	}
+}
+
+// TestFindLatestAnnotatedTag_PrefersAnnotatedOverLightweight verifies annotated tags
+// take priority over newer lightweight tags.
+func TestFindLatestAnnotatedTag_PrefersAnnotatedOverLightweight(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+
+	// Commit 1 → annotated tag v1.0.0
+	createCommitWithTime(t, repo, "file.txt", "content 1", "commit 1", now)
+	annotatedTagObj := createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
+
+	// Commit 2 → lightweight tag v2.0.0 (newer commit, but lightweight)
+	createCommitWithTime(t, repo, "file.txt", "content 2", "commit 2", now.Add(2*time.Second))
+	createLightweightTag(t, repo, "v2.0.0")
+
+	r := &Repository{raw: repo}
+	tag, err := r.FindLatestAnnotatedTag("")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tag == nil {
+		t.Fatal("expected annotated tag, got nil")
+	}
+	if tag.Name != "v1.0.0" {
+		t.Errorf("expected annotated tag 'v1.0.0', got %q", tag.Name)
+	}
+	if !tag.IsAnnotated {
+		t.Errorf("expected IsAnnotated=true for annotated tag, got false")
+	}
+	if tag.SHA != annotatedTagObj.Hash.String() {
+		t.Errorf("expected tag SHA %s, got %s", annotatedTagObj.Hash.String(), tag.SHA)
+	}
+}
+
+// TestFindLatestAnnotatedTag_LightweightTagIsAnnotatedFalse verifies IsAnnotated=false
+// for a single lightweight tag fallback.
+func TestFindLatestAnnotatedTag_LightweightTagIsAnnotatedFalse(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	createCommit(t, repo, "file.txt", "content", "initial commit")
+	createLightweightTag(t, repo, "v0.9.0")
+
+	r := &Repository{raw: repo}
+	tag, err := r.FindLatestAnnotatedTag("")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tag == nil {
+		t.Fatal("expected lightweight tag fallback, got nil")
+	}
+	if tag.Name != "v0.9.0" {
+		t.Errorf("expected tag name 'v0.9.0', got %q", tag.Name)
+	}
+	if tag.IsAnnotated {
+		t.Errorf("expected IsAnnotated=false, got true")
+	}
+}
+
+// TestFindTagByName_LightweightTag verifies that FindTagByName returns a lightweight tag
+// with IsAnnotated=false and the correct targetSHA.
+func TestFindTagByName_LightweightTag(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	commit := createCommit(t, repo, "file.txt", "content", "initial commit")
+	createLightweightTag(t, repo, "v1.5.0")
+
+	r := &Repository{raw: repo}
+	tag, err := r.FindTagByName("v1.5.0")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tag == nil {
+		t.Fatal("expected tag, got nil")
+	}
+	if tag.Name != "v1.5.0" {
+		t.Errorf("expected tag name 'v1.5.0', got %q", tag.Name)
+	}
+	if tag.IsAnnotated {
+		t.Errorf("expected IsAnnotated=false for lightweight tag, got true")
+	}
+	if tag.TargetSHA() != commit.Hash.String() {
+		t.Errorf("expected targetSHA %s, got %s", commit.Hash.String(), tag.TargetSHA())
+	}
+	// For lightweight tags SHA == targetSHA
+	if tag.SHA != tag.TargetSHA() {
+		t.Errorf("expected SHA == targetSHA for lightweight tag: SHA=%s targetSHA=%s", tag.SHA, tag.TargetSHA())
 	}
 }
