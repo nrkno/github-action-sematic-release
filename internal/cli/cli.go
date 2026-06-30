@@ -408,9 +408,10 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			// local annotated tag object over it ("object not found").
 			if !dryRun {
 				releaseNotes := generateReleaseNotes(parsedCommits, notesPRMap)
+				tagMessage := fmt.Sprintf("Release %s\n\n%s", versionTag, releaseNotes)
 
 				// 1. Create local annotated tag
-				tag, err := gitClient.CreateAnnotatedTag(versionTag, releaseNotes)
+				tag, err := gitClient.CreateAnnotatedTag(versionTag, tagMessage)
 				if err != nil {
 					logger.Error("failed to create tag", "error", err)
 					return err
