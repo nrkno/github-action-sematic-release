@@ -51,7 +51,7 @@ runs:
   using: docker
   # release.yml overwrites this line with the real release tag on every release.
   # Supply-chain integrity is provided by cosign keyless signatures — see README.md.
-  image: docker://ghcr.io/nrkno/github-action-sematic-release:v0.10.4
+  image: docker://ghcr.io/nrkno/github-action-sematic-release:v0.10.5
   env:
     # The following env vars are passed by callers via step-level env: blocks
     # and are forwarded automatically to the container by the Actions runner.
