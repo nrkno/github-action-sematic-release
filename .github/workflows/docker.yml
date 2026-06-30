@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build image for (e.g. v0.10.1)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -31,7 +37,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=ref,event=tag
+            type=raw,value=${{ inputs.tag || github.ref_name }}
             type=sha,prefix=sha-,format=short
 
       - name: Build date
@@ -48,7 +54,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ inputs.tag || github.ref_name }}
             COMMIT=${{ github.sha }}
             DATE=${{ steps.builddate.outputs.date }}
           provenance: mode=max
@@ -62,7 +68,7 @@ jobs:
       - name: Update action.yml and open PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           BRANCH="chore/update-action-image-${TAG}"
           git config user.name "github-actions[bot]"

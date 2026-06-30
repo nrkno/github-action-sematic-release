@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
       pull-requests: read    # required for ListPRsForCommit (PR logging)
     outputs:
       version: ${{ steps.semrel.outputs.version }}
@@ -36,4 +37,13 @@ jobs:
           echo "Commit SHA (use this to pin the action): \`$(git rev-parse HEAD)\`" >> $GITHUB_STEP_SUMMARY
           ./semrel notes >> $GITHUB_STEP_SUMMARY
         if: steps.semrel.outputs.released == 'true'
+
+      - name: Trigger Docker image build
+        if: steps.semrel.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run docker.yml \
+            --ref main \
+            --field tag=${{ steps.semrel.outputs.tag }}
 
