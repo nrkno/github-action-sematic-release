@@ -8,6 +8,10 @@ timestamp: 2026-06-30
 
 # Documentation log
 
+### 2026-07-01
+
+- **Update** `docs/architecture.md` — reconciled with post-security-audit reality (Wave 1 fixes): removed all stale distroless/nonroot container claims and replaced with an accurate description of the `alpine:3.19` (digest-pinned) base image running as root, with rationale (workspace ownership by the runner's root user) and the two mitigating controls (cosign verification enforced before every run, reviewed/CI-built image pipeline); removed the Docker container-action `image: docker://...:v1.2.3` snippet and replaced with the composite action mechanism (`runs.using: composite`, self-referential `ghcr.io/${{ github.action_repository }}:${{ github.action_ref }}` image tag, no chore-commit PR needed per release); documented that `cosign verify` is now enforced at run time in the composite action's `verify` step, not merely a documented recommendation; added F4 residual-risk disclosure under "What these layers do NOT protect against" — a cosign-verified image still runs as root with RW access to `$GITHUB_OUTPUT`/`$GITHUB_ENV`/`$GITHUB_WORKSPACE`, so consumers should avoid unsafe interpolation of action outputs into later `run:` steps; updated front-matter `description`/`tags` (dropped `distroless`, added `alpine`) and `timestamp` to 2026-07-01
+
 ### 2026-06-30
 
 - **Update** `docs/configuration.md` — renamed semrel-specific section to cover all subcommands; added `SEMREL_LOG_LEVEL` row (scope=all subcommands) documenting DEBUG/INFO/WARN/ERROR log verbosity control via environment variable

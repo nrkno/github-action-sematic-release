@@ -72,6 +72,19 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+
+    - id: verify
+      shell: bash
+      env:
+        ACTION_IMAGE_REPO: ${{ github.action_repository }}
+        ACTION_IMAGE_TAG: ${{ github.action_ref }}
+      run: |
+        cosign verify "ghcr.io/${ACTION_IMAGE_REPO}:${ACTION_IMAGE_TAG}" \
+          --certificate-identity-regexp "https://github.com/nrkno/github-action-sematic-release/.github/workflows/.*" \
+          --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+
     - id: run
       shell: bash
       env:
@@ -82,18 +95,46 @@ runs:
         INPUT_TOKEN: ${{ inputs.token }}
         INPUT_DRY_RUN: ${{ inputs.dry-run }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        ACTION_IMAGE_REPO: ${{ github.action_repository }}
+        ACTION_IMAGE_TAG: ${{ github.action_ref }}
       run: |
-        # Dump all environment variables to a temp file for Docker --env-file.
+        # Explicit allowlist — only vars semrel actually consumes (verified
+        # against internal/env/env.go, cmd/semrel/main.go, internal/cli/cli.go,
+        # and entrypoint.sh). Never dump the full environment: that would leak
+        # ACTIONS_RUNTIME_TOKEN, ACTIONS_ID_TOKEN_REQUEST_TOKEN, and other
+        # job-level secrets into the container.
         # NOTE: --env-file is line-oriented and does not support multiline values.
-        # All inputs to this action are single-line; this is safe for this action.
-        # Do not add inputs with multiline values without revisiting this approach.
-        printenv > "$RUNNER_TEMP/semrel-env"
+        # All vars below are single-line; this is safe for this action.
+        # Do not add vars with multiline values without revisiting this approach.
+        cat > "$RUNNER_TEMP/semrel-env" <<EOF
+        GITHUB_TOKEN=$GITHUB_TOKEN
+        GITHUB_API_URL=$GITHUB_API_URL
+        GITHUB_REPOSITORY=$GITHUB_REPOSITORY
+        GITHUB_REF=$GITHUB_REF
+        GITHUB_REF_NAME=$GITHUB_REF_NAME
+        GITHUB_SHA=$GITHUB_SHA
+        GITHUB_EVENT_NAME=$GITHUB_EVENT_NAME
+        GITHUB_BASE_REF=$GITHUB_BASE_REF
+        GITHUB_EVENT_PATH=$GITHUB_EVENT_PATH
+        GITHUB_OUTPUT=$GITHUB_OUTPUT
+        GITHUB_RUN_ID=$GITHUB_RUN_ID
+        GITHUB_ACTOR=$GITHUB_ACTOR
+        GITHUB_SERVER_URL=$GITHUB_SERVER_URL
+        GITHUB_ACTIONS=$GITHUB_ACTIONS
+        SEMREL_LOG_LEVEL=$SEMREL_LOG_LEVEL
+        INPUT_SUBCOMMAND=$INPUT_SUBCOMMAND
+        INPUT_TOKEN=$INPUT_TOKEN
+        INPUT_DRY_RUN=$INPUT_DRY_RUN
+        INPUT_WORKING_DIRECTORY=$INPUT_WORKING_DIRECTORY
+        SEMREL_TAG=$SEMREL_TAG
+        SEMREL_RELEASE_URL=$SEMREL_RELEASE_URL
+        EOF
         chmod 600 "$RUNNER_TEMP/semrel-env"
 
         # Identity-mount GITHUB_WORKSPACE and RUNNER_TEMP so the container sees
         # the same absolute paths as the host. RUNNER_TEMP covers GITHUB_OUTPUT,
         # GITHUB_STEP_SUMMARY, GITHUB_ENV, and GITHUB_STATE (all live there).
-        # github.action_ref is the exact ref written in the consumer's uses: field
+        # ACTION_IMAGE_TAG is the exact ref written in the consumer's uses: field
         # (e.g. v0.11.0 or a full 40-char commit SHA) — the image is tagged with
         # both, so either pinning style resolves to the correct image.
         docker run --rm \
@@ -101,4 +142,4 @@ runs:
           -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
           -v "$RUNNER_TEMP:$RUNNER_TEMP" \
           -w "$GITHUB_WORKSPACE" \
-          "ghcr.io/${{ github.action_repository }}:${{ github.action_ref }}"
+          "ghcr.io/${ACTION_IMAGE_REPO}:${ACTION_IMAGE_TAG}"
