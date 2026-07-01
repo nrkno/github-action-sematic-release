@@ -28,32 +28,77 @@ inputs:
     default: .
 
 outputs:
+  # Direct name-for-name mappings (binary key == declared output name)
   released:
     description: "'true' if a new release was published, 'false' otherwise."
+    value: ${{ steps.run.outputs.released }}
   version:
     description: "The released version, e.g. '1.2.3'."
+    value: ${{ steps.run.outputs.version }}
   tag:
     description: "The released git tag, e.g. 'v1.2.3'."
-  major_version:
-    description: "Major version component (integer)."
-  minor_version:
-    description: "Minor version component (integer)."
-  patch_version:
-    description: "Patch version component (integer)."
+    value: ${{ steps.run.outputs.tag }}
   bump:
     description: "Version bump type: major, minor, patch, or none."
+    value: ${{ steps.run.outputs.bump }}
   notes:
     description: "Rendered markdown release notes."
+    value: ${{ steps.run.outputs.notes }}
   sha:
     description: "HEAD commit SHA at time of release."
+    value: ${{ steps.run.outputs.sha }}
+  # Cross-mapped: binary writes 'major/minor/patch', action declares
+  # 'major_version/minor_version/patch_version'. Both sets exposed.
+  major_version:
+    description: "Major version component (integer)."
+    value: ${{ steps.run.outputs.major }}
+  minor_version:
+    description: "Minor version component (integer)."
+    value: ${{ steps.run.outputs.minor }}
+  patch_version:
+    description: "Patch version component (integer)."
+    value: ${{ steps.run.outputs.patch }}
+  # Raw binary output names as aliases for consumers using the short form
+  major:
+    description: "Major version component (integer). Alias for major_version."
+    value: ${{ steps.run.outputs.major }}
+  minor:
+    description: "Minor version component (integer). Alias for minor_version."
+    value: ${{ steps.run.outputs.minor }}
+  patch:
+    description: "Patch version component (integer). Alias for patch_version."
+    value: ${{ steps.run.outputs.patch }}
 
 runs:
-  using: docker
-  # release.yml overwrites this line with the real release tag on every release.
-  # Supply-chain integrity is provided by cosign keyless signatures — see README.md.
-  image: docker://ghcr.io/nrkno/github-action-sematic-release:v0.10.4
-  env:
-    # The following env vars are passed by callers via step-level env: blocks
-    # and are forwarded automatically to the container by the Actions runner.
-    # SEMREL_TAG, SEMREL_VERSION, SEMREL_RELEASE_URL — used by subcommand: notify
-    GITHUB_TOKEN: ${{ inputs.token }}
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        # Inject all INPUT_* vars explicitly — composite steps do NOT receive
+        # INPUT_* automatically (unlike Docker/JS actions).
+        GITHUB_TOKEN: ${{ inputs.token }}
+        INPUT_SUBCOMMAND: ${{ inputs.subcommand }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: |
+        # Dump all environment variables to a temp file for Docker --env-file.
+        # NOTE: --env-file is line-oriented and does not support multiline values.
+        # All inputs to this action are single-line; this is safe for this action.
+        # Do not add inputs with multiline values without revisiting this approach.
+        printenv > "$RUNNER_TEMP/semrel-env"
+        chmod 600 "$RUNNER_TEMP/semrel-env"
+
+        # Identity-mount GITHUB_WORKSPACE and RUNNER_TEMP so the container sees
+        # the same absolute paths as the host. RUNNER_TEMP covers GITHUB_OUTPUT,
+        # GITHUB_STEP_SUMMARY, GITHUB_ENV, and GITHUB_STATE (all live there).
+        # github.action_ref is the exact ref written in the consumer's uses: field
+        # (e.g. v0.11.0 or a full 40-char commit SHA) — the image is tagged with
+        # both, so either pinning style resolves to the correct image.
+        docker run --rm \
+          --env-file "$RUNNER_TEMP/semrel-env" \
+          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+          -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+          -w "$GITHUB_WORKSPACE" \
+          "ghcr.io/${{ github.action_repository }}:${{ github.action_ref }}"
