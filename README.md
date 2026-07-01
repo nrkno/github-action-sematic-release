@@ -199,6 +199,95 @@ jobs:
 ## Inputs & Outputs
 
 <!-- autodoc start -->
+## semrel
+Conventional-commit linter, semantic versioner, GitHub Release creator, PR notifier, and release notes generator — in one self-owned Go binary.
+
+### Required Inputs
+
+- **subcommand**: Subcommand to run: lint, release, notify, or notes.   <br> (Default: `None`, type: string)
+
+### Optional Inputs
+
+- **token**: GitHub token used for API calls and pushing tags. (Default: `${{ github.token }}`, type: string)
+- **dry-run**: Skip tag creation, push, and release creation. Prints what would happen.   <br> (Default: `false`, type: string)
+- **working-directory**: Path to the git repository root. Defaults to workspace root. (Default: `.`, type: string)
+
+
+### Outputs
+
+- **released**: 'true' if a new release was published, 'false' otherwise. (type: unknown)
+- **version**: The released version, e.g. '1.2.3'. (type: unknown)
+- **tag**: The released git tag, e.g. 'v1.2.3'. (type: unknown)
+- **bump**: Version bump type: major, minor, patch, or none. (type: unknown)
+- **notes**: Rendered markdown release notes. (type: unknown)
+- **sha**: HEAD commit SHA at time of release. (type: unknown)
+- **major_version**: Major version component (integer). (type: unknown)
+- **minor_version**: Minor version component (integer). (type: unknown)
+- **patch_version**: Patch version component (integer). (type: unknown)
+- **major**: Major version component (integer). Alias for major_version. (type: unknown)
+- **minor**: Minor version component (integer). Alias for minor_version. (type: unknown)
+- **patch**: Patch version component (integer). Alias for patch_version. (type: unknown)
+
+### Simple example usage
+
+```yaml
+---
+name: Example Workflow using this Action
+on:
+  pull_request:
+
+jobs:
+  example-job:
+    name: Example Job
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${ github.head_ref }
+          persist-credentials: true
+
+      - name: example-step
+        uses: nrkno/github-action-sematic-release@v2
+        with:
+          subcommand: <value>
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "docs(autodoc): update documentation"
+```
+
+### Full example usage
+
+```yaml
+---
+name: Example Workflow using this Action
+on:
+  pull_request:
+
+jobs:
+  example-job:
+    name: Example Job
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${ github.head_ref }
+          persist-credentials: true
+
+      - name: example-step
+        uses: nrkno/github-action-sematic-release@v2
+        with:
+          subcommand: <value>
+          token: ${{ github.token }} # Optional
+          dry-run: false # Optional
+          working-directory: . # Optional
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "docs(autodoc): update documentation"
+```
+
+
 <!-- autodoc end -->
 
 ---
