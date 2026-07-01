@@ -1,9 +1,9 @@
 ---
 type: Architecture
 title: semrel architecture
-description: Why semrel exists, internal package structure, and key design decisions including go-git, distroless, idempotency ladder, and shallow clone guard.
-tags: [architecture, supply-chain, go-git, distroless, cosign, idempotency]
-timestamp: 2026-06-30
+description: Why semrel exists, internal package structure, and key design decisions including go-git, the alpine container image, idempotency ladder, and shallow clone guard.
+tags: [architecture, supply-chain, go-git, alpine, cosign, idempotency]
+timestamp: 2026-07-01
 ---
 
 # Architecture
@@ -65,22 +65,47 @@ No internal package imports `internal/cli`. There are no circular imports.
 ### go-git vs git binary
 
 go-git is used instead of shelling out to the `git` binary. This eliminates a runtime
-dependency on a git installation and makes the distroless container viable — the
-`gcr.io/distroless/static-debian12:nonroot` base image has no shell or git binary.
+dependency on a git installation entirely — semrel never shells out to `git`, so the
+container image does not need a git binary regardless of which base image it uses.
 
 Trade-off: go-git's annotated-tag and push APIs are lower-level than the git CLI.
 The `internal/git` package wraps this complexity behind a narrow interface
 (`GitClient`) so the rest of the codebase is insulated from go-git specifics.
 
-### Distroless container
+### Container base image: alpine, running as root
 
-The final stage uses `gcr.io/distroless/static-debian12:nonroot`. This image:
+The final stage uses `alpine:3.19` (digest-pinned, not a mutable tag). This image:
 
-- Contains only the CA certificate bundle (required for HTTPS calls to the GitHub API)
-- Runs as a non-root user (`nonroot`, uid 65532)
-- Has no shell, package manager, or other attack surface
+- Contains a shell (`/bin/sh`) and the standard Alpine userland
+- Is required because `entrypoint.sh` (the container's `ENTRYPOINT`) is a shell
+  script — a fully static, shell-less minimal base image cannot execute it
+- Runs as **root** — deliberately, not by oversight
 
-The Go binary is compiled with `CGO_ENABLED=0` to produce a fully static binary.
+**Why root:** GitHub Actions mounts `$GITHUB_WORKSPACE` (the checked-out repo,
+including `.git/`) and `$RUNNER_TEMP` (which holds `$GITHUB_OUTPUT`) from the runner
+host, where they are owned by the runner's root user. A non-root container user
+cannot write tags, push commits, or write `$GITHUB_OUTPUT` against files it does not
+own. Running as root is the pragmatic choice given how the composite action mounts
+the workspace — the same constraint that affects most container-based GitHub Actions
+that need to write back into the repository.
+
+**What this means:** the container has a real attack surface — a shell, package
+manager, and standard userland — rather than the minimal footprint of a
+scratch-based or shell-less image. This is accepted and mitigated by two controls
+rather than eliminated:
+
+1. **Cosign signature verification before the image ever runs.** The composite
+   action's `verify` step calls `cosign verify` against this repo's OIDC identity
+   before `docker run` executes — see [Pinning and verification](#pinning-and-verification)
+   below. An unsigned or wrongly-signed image is refused; nothing built by anyone
+   other than this repository's own CI ever runs.
+2. **The build pipeline itself.** The image is produced by a reviewed source tree,
+   built by GitHub Actions CI (not a local or third-party build), and signed with
+   the CI job's own OIDC identity — the same chain of custody documented in
+   [Build and container pipeline](#build-and-container-pipeline).
+
+The Go binary is compiled with `CGO_ENABLED=0` to produce a fully static binary,
+independent of the base image's libc.
 
 ### GITHUB_TOKEN only
 
@@ -135,7 +160,7 @@ push to main
         ├─ go build -o semrel ./cmd/semrel   (builds from source — no bootstrap dep)
         ├─ ./semrel release                  (creates tag + GitHub Release)
         └─ if released: publish-image job
-              ├─ docker build (multi-stage, distroless)
+              ├─ docker build (multi-stage, alpine, root)
               ├─ docker push  (ghcr.io/nrkno/github-action-sematic-release:<tag>)
               └─ cosign sign  (keyless, OIDC from GitHub Actions)
 ```
@@ -157,31 +182,42 @@ CI, eliminating the dependency on a third-party action.
 
 ### Pinning and verification
 
-The `action.yml` image reference uses a mutable version tag:
-
-```yaml
-image: docker://ghcr.io/nrkno/github-action-sematic-release:v1.2.3
-```
-
-`GITHUB_TOKEN` does not have permission to push directly to branch-protected `main`,
-so the digest-pinning approach (writing `@sha256:…` back into `action.yml` after
-every release) never reached `main` reliably. Every major production Docker action
-uses mutable version tags for exactly this reason.
-
-Supply-chain integrity is instead provided by **cosign keyless signatures**. On
-every release, the CI pipeline signs the image against the NRK GitHub Actions OIDC
-identity. Consumers can verify independently:
+`action.yml` is a **composite action** (`runs.using: composite`), not a Docker
+container action. The `run` step resolves the image reference dynamically at
+run time:
 
 ```bash
-cosign verify ghcr.io/nrkno/github-action-sematic-release:v1.2.3 \
-  --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release/.*" \
-  --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+docker run --rm ... "ghcr.io/${{ github.action_repository }}:${{ github.action_ref }}"
 ```
+
+`github.action_ref` is whatever ref the consumer wrote in their own `uses:` line —
+a version tag (`v1.2.3`) or a full 40-character commit SHA. The image is tagged
+with both forms on every release, so either pinning style resolves to the correct
+image automatically. This is a deliberate difference from a Docker container
+action (`runs.using: docker`), which bakes one fixed image reference directly
+into `action.yml`'s `image:` field and must be re-pointed by a chore-commit PR
+on every release. This repository used the container-action mechanism until the
+self-referential composite action landed (see `docs/log.md`).
+
+Before `docker run` executes, a `verify` step runs `cosign verify` against the
+resolved image reference:
+
+```bash
+cosign verify "ghcr.io/${ACTION_IMAGE_REPO}:${ACTION_IMAGE_TAG}" \
+  --certificate-identity-regexp "https://github.com/nrkno/github-action-sematic-release/.github/workflows/.*" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+This is enforced at every run, not merely documented as a recommendation: if the
+image is unsigned, signed by a different identity, or the signature doesn't
+validate, `cosign verify` exits non-zero and the composite action fails before
+`docker run` ever executes. On every release, the CI pipeline signs the image
+keylessly against the NRK GitHub Actions OIDC identity.
 
 | Layer | Mechanism | What it protects against |
 | ----- | --------- | ------------------------ |
 | **Git layer** | `uses: …@<commit-SHA>` | Attacker force-pushes a tag to a malicious commit |
-| **Container layer** | cosign keyless signature on every release | Verifies the image was built by NRK's CI from the expected commit |
+| **Container layer** | `cosign verify` step, enforced before every `docker run` | An image not built and signed by this repository's own CI is refused at run time |
 
 #### Git layer — commit SHA pinning
 
@@ -201,11 +237,25 @@ given SHA.
   but do not eliminate this risk.
 - **Compromised GitHub Actions runners**: a compromised runner environment is outside
   the scope of any pinning strategy.
+- **A verified image still runs as root with write access to the job's environment**:
+  cosign verification proves the image's *provenance* (this repo's CI built and
+  signed it) — it says nothing about what a legitimately-built image is permitted
+  to do once it runs. The container executes as root with `$GITHUB_WORKSPACE` and
+  `$RUNNER_TEMP` (which holds `$GITHUB_OUTPUT`/`$GITHUB_ENV`) bind-mounted in, and
+  receives job variables via `--env-file`. Consumers should still treat action
+  outputs as untrusted-ish string data: avoid unsafe interpolation of outputs into
+  later `run:` steps, e.g.
+  `run: echo ${{ steps.x.outputs.notes }}` (unquoted, shell-interpolated) can be
+  used to inject shell metacharacters if `notes` ever contains attacker-influenced
+  commit-message text. Prefer passing outputs through `env:` and referencing the
+  environment variable inside the script instead of interpolating the expression
+  directly into `run:`.
 
 ### Recommendation
 
-Pin by **commit SHA** at the git layer. Optionally verify the cosign signature on
-the container image to confirm it was built by NRK's CI:
+Pin by **commit SHA** at the git layer. Cosign verification of the container image
+now happens automatically on every run (see above) — no manual step is required,
+but consumers can additionally verify independently:
 
 ```bash
 cosign verify ghcr.io/nrkno/github-action-sematic-release:v1.2.3 \

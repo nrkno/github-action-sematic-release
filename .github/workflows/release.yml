@@ -20,11 +20,11 @@ jobs:
       tag: ${{ steps.semrel.outputs.tag }}
       released: ${{ steps.semrel.outputs.released }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           fetch-tags: true
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: '1.25'
       - run: go build -o semrel ./cmd/semrel
@@ -33,9 +33,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./semrel release
       - run: |
-          echo "### Release ${{ steps.semrel.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "Commit SHA (use this to pin the action): \`$(git rev-parse HEAD)\`" >> $GITHUB_STEP_SUMMARY
-          ./semrel notes >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### Release ${{ steps.semrel.outputs.tag }}"
+            echo "Commit SHA (use this to pin the action): \`$(git rev-parse HEAD)\`"
+            ./semrel notes
+          } >> "$GITHUB_STEP_SUMMARY"
         if: steps.semrel.outputs.released == 'true'
 
       - name: Trigger Docker image build
