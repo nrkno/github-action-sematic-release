@@ -196,6 +196,13 @@ jobs:
 
 ---
 
+## Inputs & Outputs
+
+<!-- autodoc start -->
+<!-- autodoc end -->
+
+---
+
 ## Configuration (`.semrelrc.yml`)
 
 Place a `.semrelrc.yml` at your repo root to customise semrel behaviour.

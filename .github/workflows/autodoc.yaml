@@ -1,0 +1,20 @@
+name: Update documentation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  autodoc:
+    uses: nrkno/github-workflow-action-workflow-autodoc/.github/workflows/workflow.yaml@84a54022b61e892fcc09d945795771d2d3822ad7 # v1.1.4
+    with:
+      runs-on: 'ubuntu-latest'
+      workflow_file: 'action.yml'
+      doc_file: 'README.md'
+      start_token: '<!-- autodoc start -->'
+      end_token: '<!-- autodoc end -->'
+      table: 'false'
+      debug: '0'
