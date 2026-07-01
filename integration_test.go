@@ -156,7 +156,8 @@ func mockGitHubServer(t *testing.T) (*httptest.Server, *githubpkg.Client) {
 		fmt.Fprint(w, `{"message":"Not Found"}`)
 	}))
 
-	client := githubpkg.NewClient("test-token", server.URL)
+	client, err := githubpkg.NewClient("test-token", server.URL)
+	require.NoError(t, err)
 	return server, client
 }
 
